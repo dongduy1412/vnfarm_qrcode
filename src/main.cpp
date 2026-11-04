@@ -8,6 +8,7 @@
 #include "AppConfig.h"
 #include "DeviceKeys.h"
 #include "Screen.h"
+#include "CloudLink.h"
 
 namespace {
 DeviceKeys keys;
@@ -241,7 +242,7 @@ void setup() {
   deviceId = WiFi.macAddress();
   deviceId.replace(":", "");
   deviceId.toLowerCase();
-  Serial.printf("QR firmware 0.1.8 | device %s\n", deviceId.c_str());
+  Serial.printf("QR firmware 0.1.9 | device %s\n", deviceId.c_str());
   if (!loadConfig()) {
     initialized = startPortal();
   } else {
@@ -250,6 +251,7 @@ void setup() {
       // The setup HTTP server and AP stay off in normal operation.
       configTime(0, 0, NTP_PRIMARY, NTP_SECONDARY);
       connectWifi();
+      if (!CloudLink::begin()) Serial.println("DO link initialization failed; QR remains available.");
     }
   }
   if (!initialized) Screen::status("LOI KHOI TAO", "Khong phat QR. Kiem tra log USB.");
@@ -307,6 +309,7 @@ void loop() {
         static_cast<unsigned long>(now), static_cast<unsigned long>(qrSeconds));
     Serial.printf("QR target: %s\n", checkinUrl.c_str());
   }
+  CloudLink::tick(keys, deviceId);
   delay(20);
 }
 

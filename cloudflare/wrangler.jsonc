@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vnfarm-qrcode-device-link",
+  "account_id": "bb85d6a2a3036df9fc50f874b799a8d8",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-04",
+  "workers_dev": true,
+  "durable_objects": {
+    "bindings": [{ "name": "DEVICES", "class_name": "DeviceLink" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DeviceLink"] }],
+  "observability": { "enabled": true, "traces": { "enabled": true } },
+  "vars": {
+    "DEVICE_ID": "7ce8b1b17e60",
+    "DEVICE_PUBLIC_KEY": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErxfZ9CzlBm2t/0OvZ0Z/rFKhhzMmh8efTP99BLG7H1QaWxGDSQYJTWQGFdfbYZTGzzPI+6JiYVoVVegX3gXYuw=="
+  }
+}

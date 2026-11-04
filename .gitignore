@@ -13,4 +13,10 @@ dist/
 .env
 .env.*
 !.env.example
+node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*
+include/CloudConnection.local.h
+cloudflare/.runtime/
 

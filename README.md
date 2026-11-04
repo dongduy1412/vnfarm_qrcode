@@ -1,8 +1,10 @@
 # Firmware QR check-in — mạch tím ESP32-S3
 
-Firmware **0.1.8** đã nạp và chạy trên board: QR màu đỏ phủ gần hết màn 240×240, logo lớn ở giữa, ECDSA P-256/SHA-256, NTP và chu kỳ mặc định 30 giây. Wi-Fi và bộ key lưu trong NVS. Xem `docs/BRANDED_QR.md` và `docs/WIFI_SETUP_USB.md` cho các thay đổi mới; `SETUP_REPORT.md` và `FIRMWARE_REVIEW.md` là báo cáo các giai đoạn trước.
+Firmware **0.1.9** đã nạp và chạy trên board: QR màu đỏ phủ gần hết màn 240×240, logo lớn ở giữa, ECDSA P-256/SHA-256, NTP và chu kỳ mặc định 30 giây. Wi-Fi và bộ key lưu trong NVS. Đã thêm thử kết nối HTTPS ping/pong có chữ ký tới Cloudflare Durable Object mỗi 30 giây; xem [cloudflare/README.md](cloudflare/README.md). Xem `docs/BRANDED_QR.md` và `docs/WIFI_SETUP_USB.md` cho các thay đổi trước; `SETUP_REPORT.md` và `FIRMWARE_REVIEW.md` là báo cáo các giai đoạn trước.
 
-Đã kiểm tra 108 lượt giải mã ảnh từ chính bộ vẽ firmware và 23 test giao thức/web. Quản lý từ xa và tích hợp check-in thật trên website sự kiện chưa hoàn thành.
+Đã kiểm tra 108 lượt giải mã ảnh từ chính bộ vẽ firmware, 23 test giao thức/web và thử Worker/DO. Board thật đã nhận pong; trạng thái trên Cloudflare báo online. Lệnh quản lý từ xa và tích hợp check-in thật trên website sự kiện chưa hoàn thành.
+
+Trạng thái kết nối thử: [DO device status](https://vnfarm-qrcode-device-link.dong141220047.workers.dev/api/devices/7ce8b1b17e60/status). Đây là endpoint server quản lý, riêng với URL khách quét QR.
 
 Repo chỉ chứa mã nguồn, công cụ test và tài liệu. Không chứa private key thiết bị, mật khẩu Wi-Fi đã nhập, cơ sở dữ liệu chạy thử hay bản sao flash.
 
