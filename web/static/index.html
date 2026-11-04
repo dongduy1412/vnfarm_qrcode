@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#174d38">
+  <title>VN Farm · Test firmware QR</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/" aria-label="VN Farm trang chủ"><span class="brand-icon">V</span> VN FARM <span class="divider"></span><span class="brand-sub">Firmware Lab</span></a><span class="connection" id="connection">Đang kết nối</span></header>
+  <main>
+    <div class="intro"><div><p class="eyebrow">ESP32-S3 / FIRMWARE TEST</p><h1>Kiểm tra key & kết nối.</h1><p class="subtitle">Đăng ký public key, quét QR và kiểm tra chữ ký từ mạch tím.</p></div><span class="test-tag">MÔI TRƯỜNG TEST</span></div>
+    <section class="address-card" aria-label="Địa chỉ cho firmware"><div><span class="small-label">URL ĐIỀN VÀO FIRMWARE</span><code id="base-url">Đang lấy địa chỉ…</code><p>Điện thoại và thiết bị cần cùng mạng Wi-Fi với máy tính.</p></div><button id="copy-url" class="button secondary" type="button">Copy URL</button></section>
+    <div class="layout">
+      <div class="main-column">
+        <section class="card" id="verify-card"><div class="card-heading"><span class="step">01</span><div><h2>Kiểm tra QR trên thiết bị</h2><p>Dùng camera điện thoại quét mã để mở trang này và tự check-in.</p></div></div>
+          <form id="verify-form"><label for="qr-url">Hoặc dán đường dẫn đọc được từ QR</label><textarea id="qr-url" rows="4" placeholder="Dán toàn bộ URL của mã QR đang hiển thị…" required spellcheck="false"></textarea><div class="form-bottom"><span class="hint">Mã đổi theo chu kỳ. Hãy dùng mã mới nhất.</span><button id="verify-button" class="button primary" type="submit">Xác minh & check-in <span aria-hidden="true">↗</span></button></div></form>
+          <div id="verify-result" class="notice hidden" role="status" aria-live="polite"></div>
+        </section>
+        <section class="card"><div class="card-heading"><span class="step">02</span><div><h2>Trạng thái kết nối</h2><p>Tách riêng kết nối máy tính và kết quả nhận QR từ thiết bị.</p></div></div><div class="connection-list"><div><span>Trình duyệt → server test</span><strong id="http-status">Đang kiểm tra…</strong></div><div><span>Máy tính → USB board</span><strong id="usb-status">Đang kiểm tra…</strong></div><div><span>QR thiết bị → server</span><strong id="device-status">Chưa nhận QR hợp lệ</strong></div></div><p class="footnote">USB được nhận chỉ xác nhận kết nối phần cứng. Wi-Fi và đồng bộ giờ trên board cần kiểm tra sau khi nạp firmware; web không theo dõi trực tiếp trạng thái này.</p></section>
+      </div>
+      <aside class="side-column">
+        <section class="card session-card"><div class="small-label">QR HỢP LỆ GẦN NHẤT</div><span class="status-dot" id="session-dot"></span><h2 id="session-title">Chưa xác minh</h2><p id="session-description">Chưa nhận được QR khớp public key đã đăng ký.</p><dl id="session-details" class="hidden"></dl><button id="logout" class="button secondary hidden" type="button">Xóa kết quả để thử lại</button><div class="session-policy">Kết quả thành công được nhớ 30 phút. Mỗi QR mới vẫn được kiểm tra chữ ký và hạn mã riêng.</div></section>
+        <section class="flow-card"><h3>Luồng đang kiểm tra</h3><ol><li><span>Private key trên mạch tím</span><small>Ký dữ liệu có thời gian</small></li><li><span>Màn hình thiết bị</span><small>Hiển thị dữ liệu và chữ ký trong QR</small></li><li><span>Public key trên server</span><small>Kiểm tra chữ ký và hạn mã</small></li></ol></section>
+      </aside>
+    </div>
+    <section class="card registration-card"><div class="card-heading"><span class="step">00</span><div><h2>Đăng ký public key</h2><p>Làm một lần trên máy tính, trước khi thử QR. Lấy key từ trang thiết lập Wi-Fi của board.</p></div><span class="badge neutral">THIẾT LẬP</span></div><div id="registration-help" class="notice info hidden"></div><form id="register-form"><div class="register-grid"><div><label for="device-id">MAC thiết bị</label><input id="device-id" name="device" value="7ce8b1b17e60" maxlength="17" required spellcheck="false"><label for="ttl">Chu kỳ QR trên firmware (giây)</label><input id="ttl" name="ttl" type="number" min="10" max="60" value="30" required><p class="hint">Giá trị phải khớp với cấu hình trên thiết bị.</p></div><div><label for="public-key">Public key PEM</label><textarea id="public-key" rows="6" placeholder="-----BEGIN PUBLIC KEY-----&#10;Dán public key từ board vào đây&#10;-----END PUBLIC KEY-----" required spellcheck="false"></textarea><label class="file-link" for="key-file">Hoặc chọn file public key <input id="key-file" type="file" accept=".pem,.txt"></label></div></div><button id="register-button" class="button primary" type="submit">Lưu public key</button></form><div id="register-result" class="notice hidden" role="status" aria-live="polite"></div><div id="device-list" class="device-list"></div></section>
+    <footer>VN FARM · Local firmware test <span>Private key luôn ở trên thiết bị.</span></footer>
+  </main>
+  <div id="toast" class="toast hidden" role="status"></div>
+</body>
+</html>
+

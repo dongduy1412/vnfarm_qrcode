@@ -1,0 +1,3 @@
+# Web test and QR signature verifier
+cryptography>=44
+pyserial>=3.5
