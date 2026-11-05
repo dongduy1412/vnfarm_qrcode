@@ -143,12 +143,74 @@ export class DeviceLink extends DurableObject<Env> {
 
   status() {
     const state = this.ctx.storage.sql.exec<LinkState>('SELECT sequence,last_seen,uptime,nonce,kid FROM state WHERE id=1').toArray()[0];
+    const wsConnected = this.ctx.getWebSockets().some(ws => ws.readyState === 1);
     return {
-      device_id: this.env.DEVICE_ID, transport: 'HTTPS polling',
-      online: !!state && Math.floor(Date.now() / 1000) - state.last_seen < 90,
+      device_id: this.env.DEVICE_ID,
+      transport: wsConnected ? 'WebSocket v1' : 'HTTPS polling',
+      online: wsConnected || (!!state && Math.floor(Date.now() / 1000) - state.last_seen < 90),
       sequence: state?.sequence ?? 0, last_seen: state?.last_seen ?? null,
       uptime: state?.uptime ?? null, kid: state?.kid ?? null,
     };
+  }
+
+  async handleWebSocket(request: Request): Promise<Response> {
+    const upgradeHeader = request.headers.get('Upgrade');
+    if (!upgradeHeader || upgradeHeader.toLowerCase() !== 'websocket') {
+      return new Response('Expected Upgrade: websocket', { status: 426 });
+    }
+
+    const pair = new WebSocketPair();
+    const [client, server] = [pair[0], pair[1]];
+
+    this.ctx.acceptWebSocket(server);
+
+    const sessionId = crypto.randomUUID();
+    console.log(JSON.stringify({ event: 'ws_connect', device_id: this.env.DEVICE_ID, sessionId }));
+
+    // Send WELCOME message per endpoints.md v1
+    server.send(JSON.stringify({
+      version: 1,
+      type: 'WELCOME',
+      eventId: crypto.randomUUID(),
+      payload: {
+        sessionId,
+        generation: 1,
+        serverTimeMs: Date.now()
+      }
+    }));
+
+    server.addEventListener('message', (event) => {
+      const msg = typeof event.data === 'string' ? event.data : '';
+      if (msg === 'ping') {
+        server.send('pong');
+        console.log(JSON.stringify({ event: 'ws_ping_pong', device_id: this.env.DEVICE_ID }));
+        return;
+      }
+
+      try {
+        const data = JSON.parse(msg);
+        console.log(JSON.stringify({ event: 'ws_message', device_id: this.env.DEVICE_ID, type: data.type, eventId: data.eventId }));
+        if (data.type === 'BOOT_REPORT') {
+          console.log(JSON.stringify({ event: 'ws_boot_report', device_id: this.env.DEVICE_ID, payload: data.payload }));
+          server.send(JSON.stringify({
+            version: 1,
+            type: 'EVENT_ACK',
+            eventId: crypto.randomUUID(),
+            payload: { eventId: data.eventId }
+          }));
+        } else if (data.type === 'COMMAND_ACK' || data.type === 'COMMAND_RESULT') {
+          console.log(JSON.stringify({ event: 'ws_command_status', device_id: this.env.DEVICE_ID, type: data.type, payload: data.payload }));
+        }
+      } catch {
+        console.log(JSON.stringify({ event: 'ws_raw', device_id: this.env.DEVICE_ID, data: msg }));
+      }
+    });
+
+    server.addEventListener('close', (event) => {
+      console.log(JSON.stringify({ event: 'ws_close', device_id: this.env.DEVICE_ID, code: event.code, reason: event.reason }));
+    });
+
+    return new Response(null, { status: 101, webSocket: client });
   }
 }
 
@@ -160,6 +222,10 @@ export default {
     if(checkin)return checkin;
     const path = new URL(request.url).pathname;
     if (path === '/health' && request.method === 'GET') return reply({ ok: true, service: 'vnfarm-device-link' });
+    if (path === `/api/devices/${env.DEVICE_ID}/connection`) {
+      const stub = env.DEVICES.getByName(env.DEVICE_ID);
+      return await stub.handleWebSocket(request);
+    }
     if (path !== `/api/devices/${env.DEVICE_ID}/ping` && path !== `/api/devices/${env.DEVICE_ID}/status`) return reply({ error: 'Not found' }, 404);
     const stub = env.DEVICES.getByName(env.DEVICE_ID);
     if (path.endsWith('/status') && request.method === 'GET') return reply(await stub.status());
