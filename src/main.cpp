@@ -4,6 +4,7 @@
 #include <DNSServer.h>
 #include <Preferences.h>
 #include <esp_system.h>
+#include <esp_wifi.h>
 #include <time.h>
 #include "AppConfig.h"
 #include "DeviceKeys.h"
@@ -12,10 +13,12 @@
 #include "SavedNetworks.h"
 #include "QrContract.h"
 #include "SetupPageAsset.h"
+#include "WifiCommands.h"
 
 namespace {
 DeviceKeys keys;
 SavedNetworks networks;
+WifiCommands wifiCommands;
 WebServer portal(80);
 DNSServer portalDns;
 String wifiSsid, wifiPassword, checkinUrl, deviceId;
@@ -29,10 +32,47 @@ uint32_t lastWifiAttempt = 0;
 size_t wifiIndex = 0;
 bool wifiWasConnected = false;
 bool waitingDisplayed = false;
+bool wifiFallbackToSetup=false;
+uint32_t wifiSearchStarted=0;
 time_t displayedSlot = 0;
 String displayedKid;
 String displayedUrl;
 String usbCommand;
+bool remoteRestartPending=false,remoteAckReceived=false;
+uint32_t remoteRestartAt=0;
+String remoteCommandId;
+
+void handleRemoteCommands() {
+  CloudLink::Event event;
+  while(CloudLink::nextEvent(event)) {
+    if(event.type==CloudLink::Event::Acknowledged) {
+      if(remoteRestartPending&&remoteCommandId==event.cmdId)remoteAckReceived=true;
+      else if(wifiCommands.acknowledge(event.cmdId))Serial.printf("Device command ACK confirmed: %s\n",event.cmdId);
+      continue;
+    }
+    if(remoteRestartPending)continue;
+    auto result=wifiCommands.accept(event.cmdId,event.command,WiFi.SSID(),networks);
+    if(result==WifiCommands::Failed) {Serial.println("Device command storage failed; not acknowledged");continue;}
+    if(result==WifiCommands::Duplicate) {CloudLink::acknowledge(keys,deviceId,event.cmdId);continue;}
+    remoteCommandId=event.cmdId;remoteRestartPending=true;remoteAckReceived=false;remoteRestartAt=millis()+12000;
+    displayedUrl="";
+    Screen::status("DAT LAI WI-FI","Dang gui xac nhan cho server...");
+    Serial.printf("Device command applied: %s | saved profiles=%u | signing key preserved\n",event.command,static_cast<unsigned>(networks.size()));
+    CloudLink::acknowledge(keys,deviceId,event.cmdId);
+  }
+  if(remoteRestartPending&&(remoteAckReceived||static_cast<int32_t>(millis()-remoteRestartAt)>=0)) {
+    // Managed profiles are already updated. Clear the driver's native STA
+    // credentials only after attempting ACK over the still-live RAM connection.
+    esp_wifi_set_storage(WIFI_STORAGE_FLASH);
+    WiFi.disconnect(false,true);
+    esp_wifi_set_storage(WIFI_STORAGE_RAM);
+    if(remoteAckReceived) {
+      wifiCommands.acknowledge(remoteCommandId.c_str());
+      Serial.println("Remote Wi-Fi command acknowledged; restarting");
+    } else Serial.println("ACK still pending; will retry after Wi-Fi is available");
+    Serial.flush();delay(100);ESP.restart();
+  }
+}
 
 // Local USB maintenance only. Keep the signing key and saved settings;
 // mark setup incomplete so the portal also survives a power cycle.
@@ -158,7 +198,7 @@ void saveSetup() {
   ok = ok && store.putString("ssid", ssid) == ssid.length() &&
       store.putString("pass", password) == password.length() &&
       store.putString("url", url) == url.length() &&
-      store.putUInt("interval", seconds) == sizeof(uint32_t);
+      store.putUInt("interval", seconds) == sizeof(uint32_t) && store.putBool("fallback",false)==1;
   ok = ok && store.getString("ssid", "__missing") == ssid &&
       store.getString("pass", "__missing") == password &&
       store.getString("url", "__missing") == url && store.getUInt("interval", 0) == seconds;
@@ -245,6 +285,7 @@ bool loadConfig() {
   }
   if (checkinUrl.isEmpty()) checkinUrl = DEFAULT_CHECKIN_URL;
   qrSeconds = store.getUInt("interval", DEFAULT_QR_SECONDS);
+  wifiFallbackToSetup=store.getBool("fallback",false);
   store.end();
   return configured && !wifiSsid.isEmpty() && qrSeconds >= 10 && qrSeconds <= 60 && validUrl(checkinUrl);
 }
@@ -272,9 +313,16 @@ void setup() {
   deviceId = WiFi.macAddress();
   deviceId.replace(":", "");
   deviceId.toLowerCase();
-  Serial.printf("QR firmware 0.2.1 | device %s\n", deviceId.c_str());
+  Serial.printf("QR firmware 0.3.0 | device %s\n", deviceId.c_str());
   bool configured = loadConfig();
   bool networksReady = networks.load(wifiSsid, wifiPassword);
+  if(!networksReady||!wifiCommands.begin(networks)) {
+    Screen::status("LOI CAU HINH","Kiem tra bo nho lenh / Wi-Fi.");
+    Serial.println("Could not recover Wi-Fi command state; refusing partial recovery.");
+    return;
+  }
+  // A recovered operation may have changed the profiles and configured flag.
+  configured=loadConfig();networksReady=networks.load(wifiSsid,wifiPassword);
   Serial.printf("Saved Wi-Fi profiles: %u\n", static_cast<unsigned>(networks.size()));
   if (!networksReady) Serial.println("Could not read/migrate Wi-Fi profiles; setup required.");
   if (!configured || !networksReady || !networks.size()) {
@@ -285,6 +333,7 @@ void setup() {
       // The setup HTTP server and AP stay off in normal operation.
       configTime(0, 0, NTP_PRIMARY, NTP_SECONDARY);
       connectWifi();
+      wifiSearchStarted=millis();
       if (!CloudLink::begin()) Serial.println("DO link initialization failed; QR remains available.");
     }
   }
@@ -294,6 +343,8 @@ void setup() {
 void loop() {
   handleUsbSetup();
   if (!initialized) { delay(100); return; }
+  handleRemoteCommands();
+  if(remoteRestartPending){delay(20);return;}
   if (provisioning) {
     portalDns.processNextRequest();
     portal.handleClient();
@@ -302,6 +353,13 @@ void loop() {
     return;
   }
   if (WiFi.status() != WL_CONNECTED) {
+    if(wifiFallbackToSetup&&static_cast<uint32_t>(millis()-wifiSearchStarted)>WIFI_RETRY_MS*networks.size()+5000) {
+      Preferences config;
+      if(config.begin("qr-config",false)) {
+        bool saved=config.putBool("configured",false)==1;config.end();
+        if(saved){Serial.println("No remaining saved Wi-Fi reachable; opening setup");Serial.flush();ESP.restart();}
+      }
+    }
     if (wifiWasConnected) {
       wifiWasConnected = false;
       waitingDisplayed = false;
@@ -320,6 +378,10 @@ void loop() {
   if (!wifiWasConnected) {
     wifiWasConnected = true;
     Serial.printf("Saved Wi-Fi connected: profile %u/%u\n", static_cast<unsigned>(wifiIndex + 1), static_cast<unsigned>(networks.size()));
+    if(wifiFallbackToSetup) {
+      Preferences config;if(config.begin("qr-config",false)){config.putBool("fallback",false);config.end();}
+      wifiFallbackToSetup=false;
+    }
   }
   time_t now = time(nullptr);
   if (now < 1704067200) { // Unset time must never become a valid-looking QR.
@@ -352,7 +414,7 @@ void loop() {
         static_cast<unsigned long>(QrContract::timestamp(static_cast<uint32_t>(now), qrSeconds)), static_cast<unsigned long>(qrSeconds));
     Serial.printf("QR target: %s\n", checkinUrl.c_str());
   }
-  CloudLink::tick(keys, deviceId);
+  CloudLink::tick(keys, deviceId,wifiCommands.pendingAck());
   delay(20);
 }
 

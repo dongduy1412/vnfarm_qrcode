@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import json
+import os
 import secrets
 import subprocess
 import time
@@ -27,11 +28,14 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 opener=urllib.request.build_opener(NoRedirect())
 last_headers={}
 session_cookie=''
-def request(path, body=None, form=None):
+admin_token=secrets.token_urlsafe(32)
+def request(path, body=None, form=None, authorization=None):
     global last_headers
     data = json.dumps(body).encode() if body is not None else None
     if form is not None: data=form.encode()
-    req = urllib.request.Request(path, data=data, headers={'Content-Type': 'application/x-www-form-urlencoded' if form is not None else 'application/json','Accept':'application/json','Cookie':session_cookie})
+    headers={'Content-Type':'application/x-www-form-urlencoded' if form is not None else 'application/json','Accept':'application/json','Cookie':session_cookie}
+    if authorization: headers['Authorization']='Bearer '+authorization
+    req=urllib.request.Request(path,data=data,headers=headers)
     try:
         response=opener.open(req,timeout=5)
     except urllib.error.HTTPError as error:
@@ -49,7 +53,7 @@ def signed(iat=None):
 
 log = (runtime / 'test-do.log').open('w')
 process = subprocess.Popen(['node', 'node_modules/wrangler/bin/wrangler.js', 'dev', '--ip', '127.0.0.1', '--port', '8767',
-    '--var', f'DEVICE_PUBLIC_KEY:{public}', '--var',f'CHECKIN_PUBLIC_KEY:{raw_public}', '--persist-to', str(runtime / secrets.token_hex(6))], cwd=root, stdout=log, stderr=log)
+    '--var', f'DEVICE_PUBLIC_KEY:{public}', '--var',f'CHECKIN_PUBLIC_KEY:{raw_public}', '--persist-to', str(runtime / secrets.token_hex(6))], cwd=root, stdout=log, stderr=log,env={**os.environ,'ADMIN_API_TOKEN':admin_token})
 try:
     ready = False
     for _ in range(90):
@@ -106,6 +110,61 @@ try:
     for _ in range(35): code,_=request(live)
     assert code==429
     print('PASS: contract HTTP 302/400/401/404/410/429, login return URL, per-user idempotence, status, skew and TTL.')
+    admin=f'http://127.0.0.1:8767/api/admin/checkin/devices/{device}/commands'
+    poll='http://127.0.0.1:8767/api/device/poll'
+    ack='http://127.0.0.1:8767/api/device/ack'
+    def management(purpose,cmd=None,stamp=None):
+        t=int(time.time()) if stamp is None else stamp
+        body={'v':1,'did':device,'t':t}
+        message=f'v1.poll.{device}.{t}'
+        if purpose=='ack':body['cmdId']=cmd;message=f'v1.ack.{device}.{cmd}.{t}'
+        der=key.sign(message.encode(),ec.ECDSA(hashes.SHA256()))
+        r,s=utils.decode_dss_signature(der)
+        body['sig']=base64.urlsafe_b64encode(r.to_bytes(32,'big')+s.to_bytes(32,'big')).rstrip(b'=').decode()
+        return body
+    assert request(admin,{'command':'wipe_wifi'})[0]==401
+    assert request(admin,{'command':'wipe_wifi'},authorization='wrong-secret')[0]==401
+    assert request(admin,{'command':'rotate_private_key'},authorization=admin_token)[0]==400
+    assert request(poll,management('poll'))[1]=={'command':None}
+    assert request(poll,management('poll',stamp=int(time.time())-61))[0]==410
+    invalid=management('poll');invalid['t']+=1
+    assert request(poll,invalid)[0]==401
+    assert request(poll,dict(management('poll'),did='unknown-device'))[0]==404
+    for name in ('reconnect_wifi','forget_current_wifi','wipe_wifi'):
+        code,command=request(admin,{'command':name},authorization=admin_token)
+        assert code==202 and command['command']==name,(code,command)
+        cmd=command['cmdId']
+        code,duplicate=request(admin,{'command':name},authorization=admin_token)
+        assert code==200 and duplicate['cmdId']==cmd
+        other='wipe_wifi' if name!='wipe_wifi' else 'reconnect_wifi'
+        assert request(admin,{'command':other},authorization=admin_token)[0]==409
+        assert request(ack,management('ack',cmd))[0]==409
+        if name=='wipe_wifi':
+            # Restart the actual local Workers runtime using the same SQLite store.
+            args=process.args
+            subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            process=subprocess.Popen(args,cwd=root,stdout=log,stderr=log,env={**os.environ,'ADMIN_API_TOKEN':admin_token})
+            for _ in range(90):
+                try:
+                    if request('http://127.0.0.1:8767/health')[0]==200:break
+                except OSError:pass
+                time.sleep(.3)
+            assert any(row['cmdId']==cmd and row['acked'] is None for row in request(admin,authorization=admin_token)[1]['commands'])
+        delivered=request(poll,management('poll'))[1]
+        assert delivered['command']==name and delivered['cmdId']==cmd
+        assert request(poll,management('poll'))[1]['cmdId']==cmd
+        wrong=management('ack',cmd);wrong['cmdId']='c_changed'
+        assert request(ack,wrong)[0]==401
+        wrong_domain=management('poll');wrong_domain['cmdId']=cmd
+        assert request(ack,wrong_domain)[0]==401
+        assert request(ack,management('ack','c_unknown'))[0]==404
+        assert request(ack,management('ack',cmd))[0]==204
+        assert request(ack,management('ack',cmd))[0]==204
+        assert request(poll,management('poll'))[1]=={'command':None}
+        history=request(admin,authorization=admin_token)[1]['commands']
+        assert next(row for row in history if row['cmdId']==cmd)['acked'] is not None
+    print('PASS: 3 authenticated Wi-Fi commands, signed poll/ACK, pending queue, duplicate/admin conflict, invalid signatures, freshness and idempotent ACK.')
+
 finally:
     subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log.close()

@@ -40,3 +40,10 @@ không lấy từ QR hoặc request của người chơi.
 Server chạy nền, log/SQLite/PID trong `web/.runtime/`, được gitignore. Không
 tự đổi Windows Firewall hoặc cài autorun. Dừng đúng PID/command của server
 trước khi khởi động lại sau cập nhật code; không dừng ứng dụng khác ở cổng này.
+
+## Điều khiển Wi-Fi
+
+Trên PC, mở http://127.0.0.1:8765/ để dùng ba nút kết nối lại, quên mạng hiện
+tại và xóa toàn bộ mạng. Card chỉ dành cho loopback; token quản trị nằm ở
+file ignored trên máy, không gửi xuống trình duyệt. Chi tiết thiết lập và
+các tác động của từng lệnh: [REMOTE_WIFI_COMMANDS](../docs/REMOTE_WIFI_COMMANDS.md).

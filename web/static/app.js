@@ -12,7 +12,7 @@ async function api(path, data, options = {}) {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data), ...options
   });
   const body = await response.json();
-  const errors = { bad_request: 'Dữ liệu QR không đúng contract hoặc thời gian ở tương lai quá xa.', invalid_signature: 'Chữ ký không hợp lệ.', expired: 'QR đã hết hạn. Hãy quét mã mới.', unknown_device: 'Thiết bị chưa đăng ký public key.', rate_limited: 'Thao tác quá nhanh. Hãy thử lại sau.' };
+  const errors = { bad_request: 'Dữ liệu không hợp lệ.', invalid_signature: 'Chữ ký không hợp lệ.', expired: 'QR đã hết hạn. Hãy quét mã mới.', unknown_device: 'Thiết bị chưa đăng ký public key.', rate_limited: 'Thao tác quá nhanh. Hãy thử lại sau.', command_pending: 'Board còn một lệnh chưa xác nhận. Hãy đợi lệnh đó hoàn tất.', admin_unavailable: 'Chưa kết nối được kênh quản trị Worker.', admin_local_only: 'Điều khiển Wi-Fi trên máy tính qua 127.0.0.1.' };
   if (!response.ok) throw new Error(errors[body.error] || body.error || 'Yêu cầu thất bại.');
   return body;
 }
@@ -76,6 +76,7 @@ async function refresh() {
     renderSession(status.session);
     renderDevices(status.devices, status.can_register);
     $('#register-button').disabled = !status.can_register;
+    $('#wifi-control').hidden = !status.can_register;
     if (!status.can_register) notify('#registration-help', `Đăng ký key trên máy tính bằng http://127.0.0.1:${location.port || '8765'}. Trang điện thoại dùng để quét và xác minh QR.`, 'info');
     return status;
   } catch (error) {
@@ -146,6 +147,19 @@ $('#logout').addEventListener('click', async () => {
   catch (error) { notify('#verify-result', error.message, 'error'); }
 });
 
+const commandNames={reconnect_wifi:'Kết nối lại Wi-Fi',forget_current_wifi:'Quên mạng hiện tại',wipe_wifi:'Xóa toàn bộ Wi-Fi'};
+async function wifiCommandStatus(){
+  if(!currentStatus?.can_register)return;
+  try{const {commands}=await api('/api/wifi/commands');const pending=commands.find(command=>!command.acked);const command=pending||commands[0];$('#wifi-command-status').textContent=command?`${commandNames[command.command]} · ${command.acked?'Đã thực hiện':command.delivered?'Board đã nhận, đang chờ ACK':'Đang chờ board nhận'} · ${command.cmdId}`:'Chưa có lệnh Wi-Fi nào.';}
+  catch(error){$('#wifi-command-status').textContent=error.message;}
+}
+document.querySelectorAll('[data-wifi-command]').forEach(button=>button.addEventListener('click',async()=>{
+  const buttons=document.querySelectorAll('[data-wifi-command]');buttons.forEach(item=>item.disabled=true);
+  try{const command=await api('/api/wifi/commands',{command:button.dataset.wifiCommand});notify('#wifi-command-result',`Đã xếp lệnh “${commandNames[command.command]}”. Board sẽ thực hiện khi online và hỏi lệnh.`);await wifiCommandStatus();}
+  catch(error){notify('#wifi-command-result',error.message,'error');}
+  finally{buttons.forEach(item=>item.disabled=false);}
+}));
+$('#refresh-wifi-command').addEventListener('click',wifiCommandStatus);
 async function init() {
   const fromQr = location.pathname === '/checkin' && location.search.length > 1;
   const qrUrl = location.href;
@@ -155,7 +169,8 @@ async function init() {
   }
   try { await refresh(); if (fromQr) await checkin(qrUrl); }
   catch { notify('#verify-result', 'Chưa kết nối được server test. Hãy kiểm tra server đang chạy.', 'error'); }
-  setInterval(() => refresh().catch(() => {}), 15000);
+  await wifiCommandStatus();
+  setInterval(() => refresh().then(wifiCommandStatus).catch(() => {}), 15000);
 }
 init();
 

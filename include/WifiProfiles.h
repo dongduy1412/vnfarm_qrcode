@@ -18,6 +18,13 @@ struct WifiProfiles {
     return -1;
   }
 
+  void forget(const char* ssid) {
+    int found=find(ssid);
+    if(found<0)return;
+    for(size_t i=static_cast<size_t>(found);i+1<count;++i)entries[i]=entries[i+1];
+    entries[--count]=WifiProfile{};
+  }
+
   bool remember(const char* ssid, const char* password) {
     size_t sn = strlen(ssid), pn = strlen(password);
     if (sn == 0 || sn > 32 || pn > 63 || (pn != 0 && pn < 8)) return false;

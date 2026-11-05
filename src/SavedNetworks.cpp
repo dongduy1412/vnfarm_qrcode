@@ -55,3 +55,18 @@ bool SavedNetworks::remember(const String& ssid, const String& password) {
   profiles_ = next;
   return true;
 }
+
+bool SavedNetworks::forget(const String& ssid) {
+  WifiProfiles next=profiles_;
+  next.forget(ssid.c_str());
+  if(!persist(next))return false;
+  profiles_=next;
+  return true;
+}
+
+bool SavedNetworks::clear() {
+  WifiProfiles empty;
+  if(!persist(empty))return false;
+  profiles_=empty;
+  return true;
+}

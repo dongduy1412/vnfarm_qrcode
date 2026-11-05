@@ -155,6 +155,27 @@ class WebTests(unittest.TestCase):
         finally:
             migrated.db.close()
 
+    def test_wifi_admin_relay_does_not_expose_credentials(self):
+        from unittest.mock import patch
+        with patch('server.remote_wifi_request',return_value=(202,{'command':'reconnect_wifi','cmdId':'c_test'})) as relay:
+            code,body=self.request('/api/wifi/commands',{'command':'reconnect_wifi'})
+            self.assertEqual(code,202)
+            self.assertEqual(body['cmdId'],'c_test')
+            self.assertNotIn('token',body)
+            relay.assert_called_once_with('reconnect_wifi')
+        with patch('server.remote_wifi_request') as relay:
+            self.assertEqual(self.request('/api/wifi/commands',{'command':'rotate_key'})[0],400)
+            self.assertEqual(self.request('/api/wifi/commands',{'command':'wipe_wifi'},headers={'Origin':'http://other.test'})[0],403)
+            relay.assert_not_called()
+
+    def test_wifi_admin_requires_local_computer(self):
+        from unittest.mock import patch,MagicMock
+        remote=MagicMock(is_loopback=False)
+        with patch('server.ipaddress.ip_address',return_value=remote),patch('server.remote_wifi_request') as relay:
+            self.assertEqual(self.request('/api/wifi/commands')[0],403)
+            self.assertEqual(self.request('/api/wifi/commands',{'command':'wipe_wifi'})[0],403)
+            relay.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -35,5 +35,10 @@
     "CHECKIN_SKEW": "5",
     "CHECKIN_VALID_SECONDS": "1800",
     "TEST_MODE": "true"
+  },
+  "secrets": {
+    "required": [
+      "ADMIN_API_TOKEN"
+    ]
   }
 }

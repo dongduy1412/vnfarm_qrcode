@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { checkinHttp } from './checkin-http';
+import { deviceCommandHttp, type DeviceCommand, type WifiCommand } from './device-commands';
 
 type Ping = { device_id: string; kid: string; iat: number; nonce: string; uptime: number; sig: string };
 type LinkState = { sequence: number; last_seen: number; uptime: number; nonce: string; kid: string };
@@ -58,6 +59,38 @@ export class DeviceLink extends DurableObject<Env> {
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS test_sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires INTEGER NOT NULL)');
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS checkins (user_id TEXT NOT NULL, t INTEGER NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(user_id,t))');
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS checkin_limits (key TEXT PRIMARY KEY, bucket INTEGER NOT NULL, count INTEGER NOT NULL)');
+    this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS device_commands (cmdId TEXT PRIMARY KEY, command TEXT NOT NULL CHECK(command IN ('reconnect_wifi','forget_current_wifi','wipe_wifi')), created INTEGER NOT NULL, delivered INTEGER, acked INTEGER)");
+    this.ctx.storage.sql.exec('CREATE UNIQUE INDEX IF NOT EXISTS one_pending_command ON device_commands((1)) WHERE acked IS NULL');
+  }
+
+  enqueueCommand(name:WifiCommand) {
+    const previous=this.ctx.storage.sql.exec<DeviceCommand>('SELECT * FROM device_commands WHERE acked IS NULL LIMIT 1').toArray()[0];
+    if(previous)return {existing:true,conflict:previous.command!==name,...previous};
+    const command:DeviceCommand={cmdId:'c_'+crypto.randomUUID(),command:name,created:Math.floor(Date.now()/1000),delivered:null,acked:null};
+    this.ctx.storage.sql.exec('INSERT INTO device_commands VALUES (?,?,?,?,?)',command.cmdId,command.command,command.created,null,null);
+    // Retain a bounded admin history; never discard an unacknowledged command.
+    this.ctx.storage.sql.exec('DELETE FROM device_commands WHERE acked IS NOT NULL AND cmdId NOT IN (SELECT cmdId FROM device_commands ORDER BY created DESC LIMIT 100)');
+    console.log(JSON.stringify({event:'wifi_command_queued',did:this.env.DEVICE_ID,cmdId:command.cmdId,command:name}));
+    return {existing:false,conflict:false,...command};
+  }
+  listCommands():DeviceCommand[] {
+    return this.ctx.storage.sql.exec<DeviceCommand>('SELECT * FROM device_commands ORDER BY created DESC,cmdId DESC LIMIT 20').toArray();
+  }
+  pollCommand() {
+    const command=this.ctx.storage.sql.exec<DeviceCommand>('SELECT * FROM device_commands WHERE acked IS NULL ORDER BY created LIMIT 1').toArray()[0];
+    if(!command)return {command:null};
+    const now=Math.floor(Date.now()/1000);
+    this.ctx.storage.sql.exec('UPDATE device_commands SET delivered=COALESCE(delivered,?) WHERE cmdId=?',now,command.cmdId);
+    // t is delivery time, so an admin command may wait offline for days.
+    // Command authenticity uses verified HTTPS to a fixed host (contract option).
+    return {command:command.command,cmdId:command.cmdId,t:now};
+  }
+  ackCommand(cmdId:string):'ok'|'unknown'|'undelivered' {
+    const command=this.ctx.storage.sql.exec<DeviceCommand>('SELECT * FROM device_commands WHERE cmdId=?',cmdId).toArray()[0];
+    if(!command)return 'unknown';
+    if(command.delivered===null)return 'undelivered';
+    if(command.acked===null)this.ctx.storage.sql.exec('UPDATE device_commands SET acked=? WHERE cmdId=?',Math.floor(Date.now()/1000),cmdId);
+    return 'ok';
   }
 
   createTestSession(tokenHash:string,user:string) {
@@ -121,6 +154,8 @@ export class DeviceLink extends DurableObject<Env> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const management=await deviceCommandHttp(request,env);
+    if(management)return management;
     const checkin=await checkinHttp(request,env);
     if(checkin)return checkin;
     const path = new URL(request.url).pathname;

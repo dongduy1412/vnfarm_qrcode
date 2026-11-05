@@ -116,5 +116,4 @@ rotation may require a future firmware update; TLS verification is enabled.
 - Local DO integration checks, TypeScript check and existing 23 Python tests
   passed.
 
-Remote key rotation, Wi-Fi reset commands, management authentication/UI and
-production event check-in integration remain separate unfinished work.
+Remote Wi-Fi commands, admin authentication and the local operator UI are implemented in firmware 0.3.0; see [command protocol and verification](../docs/REMOTE_WIFI_COMMANDS.md). Remote key rotation and production event check-in integration remain unfinished.

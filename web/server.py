@@ -25,6 +25,7 @@ STATIC = Path(__file__).parent / "static"
 sys.path.insert(0, str(ROOT / "tools"))
 from verify_qr import verify_qr, parse_qr, load_raw_key, b64url, ContractError
 from test_clock import CloudClock, ClockUnavailable
+from device_admin import remote_wifi_request, AdminUnavailable, COMMANDS as WIFI_COMMANDS
 
 SESSION_SECONDS = 30 * 60  # Test session policy; independent of QR validity.
 
@@ -177,6 +178,14 @@ class Handler(BaseHTTPRequestHandler):
         if not self.host_ok():
             return self.send(400, {"error": "Địa chỉ máy chủ không hợp lệ."})
         path = urlsplit(self.path).path
+        if path == '/api/wifi/commands':
+            if not ipaddress.ip_address(self.client_address[0]).is_loopback:
+                return self.send(403, {'error':'admin_local_only'})
+            try:
+                code,body=remote_wifi_request()
+                return self.send(code,body)
+            except AdminUnavailable:
+                return self.send(503,{'error':'admin_unavailable'})
         if path in ('/api/status', '/api/checkin/status'):
             try:
                 current_session = self.bench.session(self.token())
@@ -204,6 +213,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(403, {"error": "Yêu cầu không cùng nguồn với web test."})
         path = urlsplit(self.path).path
         try:
+            if path == '/api/wifi/commands':
+                if not ipaddress.ip_address(self.client_address[0]).is_loopback:
+                    return self.send(403,{'error':'admin_local_only'})
+                data=self.read_json()
+                if set(data)!={'command'} or data['command'] not in WIFI_COMMANDS:
+                    return self.send(400,{'error':'bad_request'})
+                code,body=remote_wifi_request(data['command'])
+                return self.send(code,body)
             if path in ("/api/register", "/api/remove"):
                 if not ipaddress.ip_address(self.client_address[0]).is_loopback:
                     return self.send(403, {"error": "Đăng ký/xóa key trên máy tính tại http://127.0.0.1:" + str(self.server.server_port)})
@@ -224,6 +241,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(404, {"error": "Không tìm thấy API."})
         except ContractError as exc:
             return self.send(exc.status, {"error": exc.code})
+        except AdminUnavailable:
+            return self.send(503,{'error':'admin_unavailable'})
         except ClockUnavailable:
             return self.send(503, {"error": "clock_unavailable"})
         except PermissionError as exc:

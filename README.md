@@ -1,6 +1,6 @@
 # VNFARM · ESP32-S3 QR check-in
 
-Firmware **0.2.1**, ESP32-S3 mạch tím XH-S3E-AI + TFT ST7789 240×240.
+Firmware **0.3.0**, ESP32-S3 mạch tím XH-S3E-AI + TFT ST7789 240×240.
 Giao thức QR theo [contract mentor](docs/mentor/contract.md), với lựa chọn
 ECDSA P-256/SHA-256, public key raw uncompressed và chữ ký raw `r||s`, base64url.
 
@@ -92,3 +92,7 @@ chuyển đổi; cần `requirements-preview.txt`.
 Các báo cáo 0.1.x trong repo là lịch sử. Bản 0.2.0 sửa tương thích QR; còn
 factory reset, cấp key chung nhiều cửa và nghiệm thu toàn bộ checklist cần
 thực hiện riêng theo các mục đang mở của tài liệu mentor.
+
+## Điều khiển Wi-Fi từ server
+
+Web test trên máy tính có ba lệnh: kết nối lại (giữ mạng), quên mạng hiện tại, xóa toàn bộ Wi-Fi. Cả ba giữ key; board xác nhận với Worker trước khi restart khi kết nối còn hoạt động. Xem [giao thức, vận hành và kiểm tra](docs/REMOTE_WIFI_COMMANDS.md).
