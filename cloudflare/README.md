@@ -1,5 +1,28 @@
 # ESP32 ↔ Cloudflare Durable Object connection test
 
+## Current: contract-v1 QR check-in (firmware 0.2.0)
+
+The Worker now also implements `/checkin` and `/api/checkin/status` using
+P-256/SHA-256, message `v1.did.t`, raw public key and raw 64-byte signature
+encoded as unpadded base64url. QR TTL=60 and SKEW=5 are server settings.
+See [protocol](../docs/QR_PROTOCOL.md) and [migration](../docs/CONTRACT_MIGRATION.md).
+
+This deployed standalone Worker has `TEST_MODE=true`. Open `/login` and start
+an anonymous test session, then scan a fresh board QR. Unauthenticated scans
+redirect to login with the return URL; valid signed scans return 302 `/stamp`.
+`/stamp` is an explicitly labelled test result page and awards no real stamps.
+The DO persists per-user idempotent check-ins and applies per-IP/user request
+limits. Session tokens are random, stored hashed, HttpOnly/Secure/SameSite.
+
+Production must replace the test session adapter with the event app's existing
+authenticated user and connect its real stamp route/APIs/CMS. The event app
+source has not been supplied. `CHECKIN_VALID_SECONDS=1800` is a test choice,
+not a finalized event policy. Test sessions cannot impersonate event accounts.
+No remote reset/key rotation commands or admin CMS are added by this change.
+
+The sections below document the separate original heartbeat demo, which still
+works unchanged. Its SPKI/DER key/signature format is **not** the QR format.
+
 Deployed Worker: https://vnfarm-qrcode-device-link.dong141220047.workers.dev
 
 Read-only device status:

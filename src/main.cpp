@@ -10,6 +10,7 @@
 #include "Screen.h"
 #include "CloudLink.h"
 #include "SavedNetworks.h"
+#include "QrContract.h"
 
 namespace {
 DeviceKeys keys;
@@ -29,6 +30,7 @@ bool wifiWasConnected = false;
 bool waitingDisplayed = false;
 time_t displayedSlot = 0;
 String displayedKid;
+String displayedUrl;
 String usbCommand;
 
 // Local USB maintenance only. Keep the signing key and saved settings;
@@ -56,6 +58,12 @@ void handleUsbSetup() {
         ESP.restart();
       } else Serial.println("Could not enable Wi-Fi setup.");
     }
+    if (usbCommand == "QR_INFO") {
+      if (initialized && !provisioning && timeReady && WiFi.status() == WL_CONNECTED && displayedUrl.length()) {
+        // Explicit USB diagnostic for interoperability tests; routine logs omit sig.
+        Serial.printf("QR public key: %s\nQR test URL: %s\n", keys.publicRaw().c_str(), displayedUrl.c_str());
+      } else Serial.println("QR not ready; complete Wi-Fi setup and NTP first.");
+    }
     usbCommand = "";
   }
 }
@@ -70,13 +78,11 @@ String htmlEscape(String input) {
 }
 
 bool validUrl(const String& url) {
-  // Signed query fields go before an optional hash-router fragment (e.g. #/).
-  if (url.length() == 0) return true; // Setup can precede backend availability.
+  // Contract v1 has a fixed /checkin route and no fragment or existing query.
+  if (url.length() == 0) return false;
+  if (url.indexOf('#') >= 0 || !url.endsWith("/checkin")) return false;
   if (url.length() > MAX_CHECKIN_URL_LENGTH) return false;
-  int fragmentAt = url.indexOf('#');
-  String address = fragmentAt >= 0 ? url.substring(0, fragmentAt) : url;
-  if (fragmentAt >= 0 && (!url.substring(fragmentAt + 1).startsWith("/") ||
-      url.indexOf('#', fragmentAt + 1) >= 0)) return false;
+  String address = url;
   bool https = address.startsWith("https://") && address.length() > 8;
   bool localHttp = false;
 #if QR_ALLOW_HTTP_TEST
@@ -101,13 +107,13 @@ bool validUrl(const String& url) {
 
 void showPublicKey() {
   portal.sendHeader("Cache-Control", "no-store");
-  portal.send(200, "application/x-pem-file", keys.publicPem());
+  portal.send(200, "text/plain; charset=utf-8", keys.publicRaw());
 }
 
 void saveSetup() {
   String ssid = portal.arg("ssid");
   String password = portal.arg("password");
-  String url = portal.arg("url");
+  String url = DEFAULT_CHECKIN_URL; // Fixed trusted host/route for this build.
   String secondsText = portal.arg("seconds");
   if (portal.hasArg("saved")) {
     int selected = networks.find(portal.arg("saved"));
@@ -179,7 +185,7 @@ bool startPortal() {
       "<title>Thiết lập thiết bị</title><body><h1>Thiết lập thiết bị</h1>";
     page += "<p>Thiết bị: " + htmlEscape(deviceId) + "</p>";
     page += "<p>Lưu public key này lên server trước khi sử dụng.</p><textarea readonly rows='5' cols='48'>";
-    page += htmlEscape(keys.publicPem()) + "</textarea><p><a href='/public-key'>Tải public key</a></p>";
+    page += htmlEscape(keys.publicRaw()) + "</textarea><p>ECDSA P-256 · raw uncompressed · base64url</p><p><a href='/public-key'>Tải public key</a></p>";
     page += "<p>Tự nhớ tối đa 5 mạng. Khi bật nguồn sẽ thử lần lượt các mạng đã lưu, ưu tiên mạng lưu gần nhất.</p>";
     if (networks.size()) {
       page += "<form method='post' action='/save'><label>Mạng đã lưu <select name='saved'>";
@@ -191,7 +197,7 @@ bool startPortal() {
     }
     page += "<h2>Thêm hoặc cập nhật mạng</h2><form method='post' action='/save'><p><label>Wi-Fi <input name='ssid' maxlength='32' required></label></p>"
       "<p><label>Mật khẩu Wi-Fi <input name='password' type='password' maxlength='63'></label></p>"
-      "<p><label>URL web trò chơi <input name='url' type='url' maxlength='160' value='" + htmlEscape(checkinUrl) + "'></label></p>"
+      "<p>URL check-in: " + htmlEscape(checkinUrl) + "</p>"
       "<p><label>Chu kỳ đổi mã (giây) <input name='seconds' type='number' min='10' max='60' value='" + String(qrSeconds) + "' required></label></p>"
       "<button>Lưu và khởi động lại</button></form></body></html>";
     portal.sendHeader("Cache-Control", "no-store");
@@ -233,10 +239,9 @@ bool loadConfig() {
   wifiSsid = store.getString("ssid", "");
   wifiPassword = store.getString("pass", "");
   checkinUrl = store.getString("url", "");
-  // Apply the user's event URL to devices already configured with our LAN test.
-  // Only migrate that known old URL; keep saved Wi-Fi credentials and key intact.
-  const String legacyTestUrl = "http://192.168.1.221:8765/checkin";
-  if (configured && checkinUrl == legacyTestUrl && checkinUrl != DEFAULT_CHECKIN_URL) {
+  // Migrate older saved endpoints to this build's trusted contract URL.
+  // Keep saved Wi-Fi credentials, profiles and signing key intact.
+  if (checkinUrl != DEFAULT_CHECKIN_URL) {
     checkinUrl = DEFAULT_CHECKIN_URL;
     if (store.putString("url", checkinUrl) != checkinUrl.length())
       Serial.println("Could not persist new QR URL; using it for this boot.");
@@ -249,16 +254,12 @@ bool loadConfig() {
 
 // Provisional server contract: docs/QR_PROTOCOL.md. This is NOT JWT or TOTP.
 bool nextQr(time_t issuedAt, String& url) {
-  String timestamp = String(static_cast<unsigned long>(issuedAt));
-  String lifetime = String(qrSeconds);
-  String payload = "v1\n" + deviceId + "\n" + keys.keyId() + "\n" + timestamp + "\n" + lifetime;
+  uint32_t rounded = QrContract::timestamp(static_cast<uint32_t>(issuedAt), qrSeconds);
+  char payload[64];
+  if (!QrContract::message(payload, sizeof(payload), deviceId.c_str(), rounded)) return false;
   String signature;
-  if (!keys.sign(payload, signature)) return false;
-  int fragmentAt = checkinUrl.indexOf('#');
-  String address = fragmentAt >= 0 ? checkinUrl.substring(0, fragmentAt) : checkinUrl;
-  String fragment = fragmentAt >= 0 ? checkinUrl.substring(fragmentAt) : "";
-  url = address + "?v=1&dev=" + deviceId + "&kid=" + keys.keyId() +
-      "&iat=" + timestamp + "&ttl=" + lifetime + "&sig=" + signature + fragment;
+  if (!keys.signQr(String(payload), signature)) return false;
+  url = checkinUrl + "?v=1&did=" + deviceId + "&t=" + String(rounded) + "&sig=" + signature;
   return true;
 }
 }
@@ -274,7 +275,7 @@ void setup() {
   deviceId = WiFi.macAddress();
   deviceId.replace(":", "");
   deviceId.toLowerCase();
-  Serial.printf("QR firmware 0.1.10 | device %s\n", deviceId.c_str());
+  Serial.printf("QR firmware 0.2.0 | device %s\n", deviceId.c_str());
   bool configured = loadConfig();
   bool networksReady = networks.load(wifiSsid, wifiPassword);
   Serial.printf("Saved Wi-Fi profiles: %u\n", static_cast<unsigned>(networks.size()));
@@ -348,9 +349,10 @@ void loop() {
       return;
     }
     displayedSlot = slot;
+    displayedUrl = url;
     displayedKid = keys.keyId();
-    Serial.printf("QR refreshed at %lu, valid for %lu seconds\n",
-        static_cast<unsigned long>(now), static_cast<unsigned long>(qrSeconds));
+    Serial.printf("QR refreshed: t=%lu, interval=%lu seconds (TTL is server policy)\n",
+        static_cast<unsigned long>(QrContract::timestamp(static_cast<uint32_t>(now), qrSeconds)), static_cast<unsigned long>(qrSeconds));
     Serial.printf("QR target: %s\n", checkinUrl.c_str());
   }
   CloudLink::tick(keys, deviceId);

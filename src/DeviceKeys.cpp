@@ -2,6 +2,20 @@
 #include <Preferences.h>
 #include <mbedtls/base64.h>
 #include <mbedtls/sha256.h>
+#include "QrContract.h"
+
+namespace {
+String base64Url(const unsigned char* bytes, size_t size) {
+  unsigned char encoded[256];
+  size_t length = 0;
+  if (mbedtls_base64_encode(encoded, sizeof(encoded) - 1, &length, bytes, size) != 0) return "";
+  encoded[length] = 0;
+  String result(reinterpret_cast<char*>(encoded));
+  result.replace("+", "-"); result.replace("/", "_");
+  while (result.endsWith("=")) result.remove(result.length() - 1);
+  return result;
+}
+}
 
 DeviceKeys::DeviceKeys() {
   mbedtls_pk_init(&key_);
@@ -80,5 +94,29 @@ bool DeviceKeys::sign(const String& data, String& signature) {
   signature.replace("/", "_");
   while (signature.endsWith("=")) signature.remove(signature.length() - 1);
   return true;
+}
+
+String DeviceKeys::publicRaw() {
+  if (!ready_) return "";
+  unsigned char raw[65];
+  size_t length = 0;
+  auto* ec = mbedtls_pk_ec(key_);
+  if (mbedtls_ecp_point_write_binary(&ec->grp, &ec->Q, MBEDTLS_ECP_PF_UNCOMPRESSED,
+      &length, raw, sizeof(raw)) != 0 || length != sizeof(raw)) return "";
+  return base64Url(raw, length);
+}
+
+bool DeviceKeys::signQr(const String& data, String& signature) {
+  String encoded;
+  if (!sign(data, encoded)) return false; // Existing signer self-verifies DER.
+  encoded.replace("-", "+"); encoded.replace("_", "/");
+  while (encoded.length() % 4) encoded += '=';
+  unsigned char der[80], raw[64];
+  size_t length = 0;
+  if (mbedtls_base64_decode(der, sizeof(der), &length,
+      reinterpret_cast<const unsigned char*>(encoded.c_str()), encoded.length()) != 0 ||
+      !QrContract::derToRaw(der, length, raw)) return false;
+  signature = base64Url(raw, sizeof(raw));
+  return signature.length() == 86;
 }
 

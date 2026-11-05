@@ -12,7 +12,8 @@ async function api(path, data, options = {}) {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data), ...options
   });
   const body = await response.json();
-  if (!response.ok) throw new Error(body.error || 'Yêu cầu thất bại.');
+  const errors = { bad_request: 'Dữ liệu QR không đúng contract hoặc thời gian ở tương lai quá xa.', invalid_signature: 'Chữ ký không hợp lệ.', expired: 'QR đã hết hạn. Hãy quét mã mới.', unknown_device: 'Thiết bị chưa đăng ký public key.', rate_limited: 'Thao tác quá nhanh. Hãy thử lại sau.' };
+  if (!response.ok) throw new Error(errors[body.error] || body.error || 'Yêu cầu thất bại.');
   return body;
 }
 
@@ -49,7 +50,7 @@ function renderDevices(devices, canRegister) {
     const row = document.createElement('div'); row.className = 'device-row';
     const content = document.createElement('div');
     const name = document.createElement('strong'); name.textContent = device.device_id;
-    const detail = document.createElement('p'); detail.textContent = `Chu kỳ ${device.ttl}s · Fingerprint: ${device.kid}`;
+    const detail = document.createElement('p'); detail.textContent = `TTL server ${device.ttl}s · Fingerprint: ${device.kid}`;
     content.append(name, detail); row.append(content);
     if (canRegister) {
       const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'button secondary'; remove.textContent = 'Xóa đăng ký';

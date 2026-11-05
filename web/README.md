@@ -1,74 +1,42 @@
-# Web test key và kết nối
-
-Phạm vi hiện tại theo người dùng: public key, chữ ký QR, hạn mã và kết nối. Không có giao diện hay API gửi ảnh vật phẩm.
-
-## Chạy
-
-Để server chạy nền và không phụ thuộc phiên terminal, mở PowerShell rồi chạy:
+# Local firmware lab — contract v1
 
 ```powershell
-Set-Location 'F:\vnfarm\qrcode'
+python -m pip install -r requirements.txt
 .\web\start.ps1
 ```
 
-Script dùng IPv4 adapter Wi-Fi hiện tại, giữ đăng ký public key trong SQLite và ghi log vào `web/.runtime/`. Không tự tạo autorun khi bật Windows và không tự đổi Windows Firewall.
+Trang máy tính: `http://127.0.0.1:8765/`. Điện thoại dùng IP Wi-Fi máy tính
+được script in ra. Chỉ loopback được đăng ký/gỡ public key; trang lab dùng
+raw P-256 base64url lấy từ setup firmware 0.2.0. Đăng ký cũ dạng PEM trong
+SQLite tự chuyển sang cùng key raw và TTL mặc định 60; không xoay key.
 
-Hoặc chạy trực tiếp trong terminal (server chỉ chạy khi tiến trình này còn hoạt động):
-
-```powershell
-Set-Location 'F:\vnfarm\qrcode'
-python web/server.py --lan-ip 192.168.1.221 --port 8765
-```
-
-- Máy tính đăng ký public key: `http://127.0.0.1:8765/`.
-- Điện thoại cùng Wi-Fi: `http://192.168.1.221:8765/`.
-- URL firmware đưa vào QR: `http://192.168.1.221:8765/checkin`.
-
-IP `192.168.1.221` được đọc từ adapter Wi-Fi máy này lúc setup. Nếu IP đổi, sửa cả `--lan-ip` và URL trong cấu hình firmware/PlatformIO. Server và board phải cùng mạng có truy cập server này; Wi-Fi board cũng cần truy cập NTP để lấy giờ.
-
-## Bản firmware để test cục bộ
-
-Đã có environment `s3tim_local` trong `platformio.ini`. Environment này cho phép HTTP tới IP LAN riêng và có URL mặc định trỏ tới server ở trên. Environment `s3tim` thông thường vẫn yêu cầu HTTPS.
+URL trang lab và URL QR tin cậy là hai địa chỉ khác nhau. Mặc định lab xác
+minh QR của Worker:
+`https://vnfarm-qrcode-device-link.dong141220047.workers.dev/checkin`.
+Dán URL quét được vào lab để kiểm tra; quét QR trực tiếp sẽ mở Worker.
 
 ```powershell
-python -m platformio run -e s3tim_local
+python web/server.py --lan-ip 192.168.1.3 --port 8765 --checkin-url https://vnfarm-qrcode-device-link.dong141220047.workers.dev/checkin
 ```
 
-Lệnh nạp thử (bản 0.1.1 đã được nạp, người dùng đã xác nhận hiện chữ/Wi-Fi):
+Signature raw `r||s`, message `v1.did.t`, TTL độc lập N; TTL=60, SKEW=5 mặc
+định. Có trạng thái `/api/checkin/status` và phiên test 30 phút, không có
+tài khoản sự kiện hoặc gửi ảnh vật phẩm. API `/api/checkin` giữ POST để hỗ
+trợ dán URL vào lab; HTTP `GET /checkin` đúng contract nằm ở Worker.
 
-```powershell
-python -m platformio run -e s3tim_local -t upload --upload-port COM5
-```
+## Đồng hồ local
 
-Đã dùng `board_upload.after_reset = watchdog_reset` để ứng dụng chạy sau nạp, và SPI mode 3 để màn hình này hiển thị được. Không cần nạp lại chỉ để nhập Wi-Fi hoặc lấy public key.
+Windows hiện bị chậm khoảng 52 giây và W32Time chưa chạy; không đủ quyền mở
+dịch vụ đồng bộ. Vì thế `start.ps1` bật tùy chọn `--clock-url` trỏ tới `/health`
+của Worker qua HTTPS đã xác minh chứng chỉ. Lab lấy HTTP Date, chạy tiếp bằng
+monotonic clock và thử đồng bộ lại mỗi 5 phút. Nguồn giờ quá cũ hơn 10 phút
+thì từ chối kiểm tra với 503. Không nới SKEW/TTL hay thay giờ Windows.
 
-## Cách thử với board thật sau nạp
+Worker thật luôn dùng `Date.now()` của Cloudflare như contract; ESP dùng NTP.
+Không bật `--clock-url` thì lab dùng giờ hệ thống bình thường, cần đồng bộ
+Windows đúng giờ. Địa chỉ nguồn giờ là cấu hình tin cậy của người vận hành,
+không lấy từ QR hoặc request của người chơi.
 
-1. Với bản 0.1.4, chọn mạng `VNFARM-…` trong cài đặt Wi-Fi điện thoại, nhập mật khẩu cố định `12345678`. Sau khi kết nối, quét QR trên màn hình để mở trang cấu hình `http://192.168.4.1/`.
-2. Copy/tải public key trước khi lưu Wi-Fi. Không nhập hoặc gửi private key lên web test.
-3. Trên máy tính, quay về mạng Wi-Fi chung, mở `http://127.0.0.1:8765`, đăng ký public key với MAC board và chu kỳ khớp firmware (mặc định 30 giây).
-4. Ở trang thiết lập board, nhập Wi-Fi. Điền URL `http://192.168.1.221:8765/checkin` hoặc để trống để dùng mặc định của bản `s3tim_local`. Lưu và chờ board lấy giờ, hiện QR.
-5. Điện thoại quay về Wi-Fi chung, dùng camera điện thoại quét QR trên màn hình. Trang mở ra sẽ tự xác minh.
-6. Hoặc dán nguyên URL đọc từ QR vào web test. Chữ ký/key đúng và mã còn hạn thì báo thành công; sửa dữ liệu hoặc mã quá hạn thì báo lỗi.
-7. Sau khi restart/rút cắm điện, public key phải giữ nguyên. QR mới vẫn xác minh được với key đã đăng ký.
-
-## Ý nghĩa trạng thái
-
-- Trình duyệt → server: một request HTTP thật tới `/api/status`.
-- Máy tính → USB: liệt kê cổng `303A:1001` bằng pyserial, không mở cổng, không reset board, không chiếm COM5 khi nạp.
-- QR thiết bị → server: kết quả xác minh bằng public key, không phải phép đo Wi-Fi/heartbeat trực tiếp. Dấu thời gian hiển thị là lần xác minh thành công gần nhất, không phải thông báo board đang online liên tục.
-- Kết quả thành công nhớ 30 phút trong trình duyệt qua phiên server; từng QR mới luôn kiểm tra thời hạn riêng. Đây là chính sách của web test, không phải thời hạn phiên chơi đã được lead chốt.
-
-Public key lưu SQLite trong `web/.runtime/` (đã gitignore). Khởi động lại server giữ đăng ký key, xóa các phiên test. Đăng ký/xóa key chỉ cho phép truy cập từ máy tính qua loopback. Điện thoại dùng trang LAN để xác minh.
-
-Nếu điện thoại không mở được URL LAN: kiểm tra cùng Wi-Fi, IP hiện tại, cách ly client của mạng và Windows Firewall cho Python/cổng 8765. Chưa tự thay đổi firewall trên máy.
-
-## Kiểm tra tự động
-
-```powershell
-python -m unittest discover -s tests -v
-node --check web/static/app.js
-```
-
-Python đang dùng có `cryptography==50.0.0`, `pyserial==3.5`. Nếu chuyển máy khác, cần cài các package tương ứng. Không cần npm, CDN hoặc framework frontend để chạy trang.
-
+Server chạy nền, log/SQLite/PID trong `web/.runtime/`, được gitignore. Không
+tự đổi Windows Firewall hoặc cài autorun. Dừng đúng PID/command của server
+trước khi khởi động lại sau cập nhật code; không dừng ứng dụng khác ở cổng này.

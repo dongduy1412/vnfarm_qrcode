@@ -29,7 +29,7 @@ constexpr size_t MAX_CHECKIN_URL_LENGTH = 160;
 #define QR_ALLOW_HTTP_TEST 0
 #endif
 #ifndef QR_DEFAULT_CHECKIN_URL
-#define QR_DEFAULT_CHECKIN_URL "https://vnfam.999.vn/#/"
+#define QR_DEFAULT_CHECKIN_URL "https://vnfarm-qrcode-device-link.dong141220047.workers.dev/checkin"
 #endif
 constexpr const char* DEFAULT_CHECKIN_URL = QR_DEFAULT_CHECKIN_URL;
 

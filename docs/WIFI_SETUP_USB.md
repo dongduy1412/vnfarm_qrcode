@@ -1,5 +1,11 @@
 # Change Wi-Fi using USB
 
+Current firmware 0.2.0 uses the contract-v1 QR endpoint fixed at build time:
+`https://vnfarm-qrcode-device-link.dong141220047.workers.dev/checkin`.
+The setup page exports **raw base64url** public keys. Historical notes below
+describe when the USB and multi-network features were introduced; key and
+Wi-Fi preservation behavior remains the same.
+
 Firmware 0.1.6 accepts the ASCII command `SETUP_WIFI\n` over native USB CDC
 (COM5 on the current PC, 115200 baud). This is a local USB maintenance command.
 It marks setup incomplete and restarts into the setup portal, preserving the
@@ -8,7 +14,7 @@ cycle until new settings are saved successfully.
 
 1. Connect to `VNFARM-b17e60`, password `12345678`.
 2. Open `http://192.168.4.1/` and enter the new 2.4 GHz Wi-Fi credentials.
-3. Keep the event URL `https://vnfam.999.vn/#/` and interval 30 seconds.
+3. Keep interval 30 seconds; the current build's URL is displayed read-only.
 4. Save. The device checks the network before saving and restarting.
 
 Verified on the connected device: upload hashes passed, command caused a normal

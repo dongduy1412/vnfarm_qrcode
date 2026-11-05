@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, utils
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "web"))
 from server import TestBench, make_server
@@ -31,7 +31,8 @@ class WebTests(unittest.TestCase):
         self.client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         self.key = ec.generate_private_key(ec.SECP256R1())
         public = self.key.public_key()
-        self.pem = public.public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+        self.pem = public.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+        self.pem = base64.urlsafe_b64encode(self.pem).rstrip(b"=").decode()
         der = public.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
         self.kid = hashlib.sha256(der).hexdigest()
 
@@ -54,15 +55,16 @@ class WebTests(unittest.TestCase):
             return response.status, json.loads(response.read())
 
     def register(self):
-        status, _ = self.request("/api/register", {"device_id": "7c:e8:b1:b1:7e:60", "public_key": self.pem, "ttl": 30})
+        status, _ = self.request("/api/register", {"device_id": "7c:e8:b1:b1:7e:60", "public_key": self.pem, "ttl": 60})
         self.assertEqual(status, 200)
 
     def qr(self, issued=None):
-        fields = {"v": "1", "dev": "7ce8b1b17e60", "kid": self.kid, "iat": str(issued or int(time.time())), "ttl": "30"}
-        canonical = "\n".join(["v1", fields["dev"], fields["kid"], fields["iat"], fields["ttl"]])
-        signature = self.key.sign(canonical.encode(), ec.ECDSA(hashes.SHA256()))
-        fields["sig"] = base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
-        return self.bench.base_url + "?" + urlencode(fields)
+        t = issued if issued is not None else int(time.time())//30*30
+        fields = {"v":"1","did":"7ce8b1b17e60","t":str(t)}
+        der=self.key.sign(f'v1.7ce8b1b17e60.{t}'.encode(),ec.ECDSA(hashes.SHA256()))
+        r, sig_s=utils.decode_dss_signature(der)
+        fields['sig']=base64.urlsafe_b64encode(r.to_bytes(32,'big')+sig_s.to_bytes(32,'big')).rstrip(b'=').decode()
+        return self.bench.base_url+'?'+urlencode(fields)
 
     def test_photo_api_not_in_test_scope(self):
         status, data = self.request("/api/photo", b"image", content_type="image/png")
@@ -80,17 +82,17 @@ class WebTests(unittest.TestCase):
 
     def test_expired_qr_does_not_create_session(self):
         self.register()
-        self.assertEqual(self.request("/api/checkin", {"url": self.qr(int(time.time()) - 31)})[0], 400)
+        self.assertEqual(self.request("/api/checkin", {"url": self.qr(int(time.time()) - 61)})[0], 410)
         self.assertIsNone(self.request("/api/status")[1]["session"])
 
     def test_tampered_qr_does_not_create_session(self):
         self.register()
-        url = self.qr().replace("ttl=30", "ttl=60")
-        self.assertEqual(self.request("/api/checkin", {"url": url})[0], 400)
+        url = self.qr().replace("did=7ce8b1b17e60", "did=7ce8b1b17e61")
+        self.assertEqual(self.request("/api/checkin", {"url": url})[0], 404)
         self.assertIsNone(self.request("/api/status")[1]["session"])
 
     def test_unregistered_device_rejected(self):
-        self.assertEqual(self.request("/api/checkin", {"url": self.qr()})[0], 400)
+        self.assertEqual(self.request("/api/checkin", {"url": self.qr()})[0], 404)
 
     def test_key_update_revokes_old_session(self):
         self.register()
@@ -107,7 +109,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(status["devices"], [])
 
     def test_invalid_public_key_rejected(self):
-        self.assertEqual(self.request("/api/register", {"device_id": "7ce8b1b17e60", "public_key": "bad", "ttl": 30})[0], 400)
+        self.assertEqual(self.request("/api/register", {"device_id": "7ce8b1b17e60", "public_key": "bad", "ttl": 60})[0], 400)
 
     def test_cross_origin_post_rejected(self):
         self.assertEqual(self.request("/api/logout", {}, headers={"Origin": "http://other.test"})[0], 403)
@@ -121,6 +123,37 @@ class WebTests(unittest.TestCase):
         self.assertIn("supported", data["usb"])
         self.assertIsNone(data["session"])
         self.assertNotIn("firmware_online", data)
+
+    def test_repeat_same_code_keeps_session(self):
+        self.register()
+        qr = self.qr()
+        first = self.request('/api/checkin', {'url': qr})[1]['session']
+        second = self.request('/api/checkin', {'url': qr})[1]['session']
+        self.assertEqual(first, second)
+        self.assertEqual(len(self.bench.sessions), 1)
+
+    def test_contract_status_api(self):
+        self.assertEqual(self.request('/api/checkin/status')[1], {'checkedIn': False})
+        self.register()
+        self.request('/api/checkin', {'url': self.qr()})
+        status = self.request('/api/checkin/status')[1]
+        self.assertTrue(status['checkedIn'])
+        self.assertEqual(status['deviceId'], '7ce8b1b17e60')
+
+    def test_legacy_pem_registration_migrates_without_key_rotation(self):
+        import sqlite3
+        db_path = Path(self.tmp.name) / 'legacy.sqlite3'
+        pem = self.key.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+        with sqlite3.connect(db_path) as db:
+            db.execute('CREATE TABLE devices (device TEXT PRIMARY KEY,pem TEXT,kid TEXT,ttl INTEGER)')
+            db.execute('INSERT INTO devices VALUES (?,?,?,30)', ('7ce8b1b17e60',pem,self.kid))
+        db.close()
+        migrated = TestBench(self.bench.base_url, db_path)
+        try:
+            row = migrated.db.execute('SELECT pem,kid,ttl FROM devices').fetchone()
+            self.assertEqual(row, (self.pem,self.kid,60))
+        finally:
+            migrated.db.close()
 
 
 if __name__ == "__main__":

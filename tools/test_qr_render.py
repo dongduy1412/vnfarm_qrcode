@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image, ImageFilter
 import zxingcpp
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, utils
 
 root = Path(__file__).resolve().parents[1]
 dll = ctypes.CDLL(str(root / '.pio' / 'qr-preview.dll'))
@@ -21,12 +21,13 @@ key = ec.generate_private_key(ec.SECP256R1())
 rng = random.Random(42)
 count = 0
 for i in range(36):
-    base = 'https://vnfam.999.vn/' if i < 24 else 'https://example.com/' + 'x' * (45, 75, 141)[i % 3]
-    iat = 1793780000 + i * 30
-    kid = ''.join(rng.choice('0123456789abcdef') for _ in range(64))
-    payload = f'v1\n7ce8b1b17e60\n{kid}\n{iat}\n30'.encode()
-    signature = base64.urlsafe_b64encode(key.sign(payload, ec.ECDSA(hashes.SHA256()))).rstrip(b'=').decode()
-    text = f'{base}?v=1&dev=7ce8b1b17e60&kid={kid}&iat={iat}&ttl=30&sig={signature}#/'
+    base = 'https://vnfarm-qrcode-device-link.dong141220047.workers.dev/checkin' if i < 24 else 'https://example.com/' + 'x' * (45, 75, 132)[i % 3] + '/checkin'
+    iat = (1793780000 // 30 + i) * 30
+    payload = f'v1.7ce8b1b17e60.{iat}'.encode()
+    der=key.sign(payload,ec.ECDSA(hashes.SHA256()))
+    r,sig_s=utils.decode_dss_signature(der)
+    signature=base64.urlsafe_b64encode(r.to_bytes(32,'big')+sig_s.to_bytes(32,'big')).rstrip(b'=').decode()
+    text=f'{base}?v=1&did=7ce8b1b17e60&t={iat}&sig={signature}'
     pixels = (ctypes.c_uint16 * (240 * 240))()
     assert dll.renderPreview(text.encode(), pixels), len(text)
     p = np.ctypeslib.as_array(pixels).reshape(240, 240).astype(np.uint32)
@@ -41,4 +42,4 @@ for i in range(36):
         assert result and result.text == text, f'Decode failed: case {i}, {len(text)} bytes'
         count += 1
 assert not dll.renderPreview(b'x' * 383, pixels), 'Oversize input must fail'
-print(f'PASS: {count} QR decodes, real signed sample URLs, versions 17-20, oversize rejected.')
+print(f'PASS: {count} QR decodes, real signed sample URLs, contract raw P-256 signatures, oversize rejected.')

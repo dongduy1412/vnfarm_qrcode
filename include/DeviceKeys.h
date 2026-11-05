@@ -10,7 +10,9 @@ class DeviceKeys {
   ~DeviceKeys();
   bool begin();
   bool sign(const String& data, String& signature);
+  bool signQr(const String& data, String& signature);
   String publicPem();
+  String publicRaw();
   const String& keyId() const { return keyId_; }
  private:
   mbedtls_pk_context key_;

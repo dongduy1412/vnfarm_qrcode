@@ -1,0 +1,55 @@
+{
+  "warning": "TEST ONLY: deliberately published fixture private key. Never provision a real device with this key.",
+  "algorithm": "ecdsa-p256-sha256",
+  "publicKeyFormat": "x962-uncompressed-base64url",
+  "signatureFormat": "ieee-p1363-base64url",
+  "privateKeyPkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgrW6YsAO4e0030a2c_LnaIbjS8_im58Zcv5GOgbPVIt6hRANCAAS2JLysyej5yvePSSbA80znM4bkHFl_h96iBnSuU0ea3fb46tsBNVVL-UUOjd3nofgce1k-vkvCfTEB8yiV05cq",
+  "publicKey": "BLYkvKzJ6PnK949JJsDzTOczhuQcWX-H3qIGdK5TR5rd9vjq2wE1VUv5RQ6N3eeh-Bx7WT6-S8J9MQHzKJXTlyo",
+  "did": "door-1",
+  "t": 1793814000,
+  "N": 30,
+  "TTL": 60,
+  "SKEW": 5,
+  "message": "v1.door-1.1793814000",
+  "sig": "g71rIf7HjHaE1jN2qnJ3vtm0kPU0zAsql8dJwxc-yEiCc4W1gfFrQoJTK65UmGsCeCSWCAp3p2YpsDlcg5b9XA",
+  "signatureDer": "MEYCIQCDvWsh_seMdoTWM3aqcne-2bSQ9TTMCyqXx0nDFz7ISAIhAIJzhbWB8WtCglMrrlSYawJ4JJYICnenZimwOVyDlv1c",
+  "url": "https://checkin.example.test/checkin?v=1&did=door-1&t=1793814000&sig=g71rIf7HjHaE1jN2qnJ3vtm0kPU0zAsql8dJwxc-yEiCc4W1gfFrQoJTK65UmGsCeCSWCAp3p2YpsDlcg5b9XA",
+  "cases": [
+    {
+      "name": "valid",
+      "now": 1793814005,
+      "expectedStatus": 302
+    },
+    {
+      "name": "tampered_signature",
+      "now": 1793814005,
+      "expectedStatus": 401
+    },
+    {
+      "name": "expired",
+      "now": 1793814061,
+      "expectedStatus": 410
+    },
+    {
+      "name": "future",
+      "now": 1793813994,
+      "expectedStatus": 400
+    },
+    {
+      "name": "unknown_device",
+      "now": 1793814005,
+      "expectedStatus": 404
+    },
+    {
+      "name": "missing_signature",
+      "now": 1793814005,
+      "expectedStatus": 400
+    },
+    {
+      "name": "same_user_repeat",
+      "now": 1793814005,
+      "expectedStatus": 302,
+      "newCheckin": false
+    }
+  ]
+}

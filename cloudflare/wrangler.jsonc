@@ -6,12 +6,34 @@
   "compatibility_date": "2026-11-04",
   "workers_dev": true,
   "durable_objects": {
-    "bindings": [{ "name": "DEVICES", "class_name": "DeviceLink" }]
+    "bindings": [
+      {
+        "name": "DEVICES",
+        "class_name": "DeviceLink"
+      }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DeviceLink"] }],
-  "observability": { "enabled": true, "traces": { "enabled": true } },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "DeviceLink"
+      ]
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "traces": {
+      "enabled": true
+    }
+  },
   "vars": {
     "DEVICE_ID": "7ce8b1b17e60",
-    "DEVICE_PUBLIC_KEY": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErxfZ9CzlBm2t/0OvZ0Z/rFKhhzMmh8efTP99BLG7H1QaWxGDSQYJTWQGFdfbYZTGzzPI+6JiYVoVVegX3gXYuw=="
+    "DEVICE_PUBLIC_KEY": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErxfZ9CzlBm2t/0OvZ0Z/rFKhhzMmh8efTP99BLG7H1QaWxGDSQYJTWQGFdfbYZTGzzPI+6JiYVoVVegX3gXYuw==",
+    "CHECKIN_PUBLIC_KEY": "BK8X2fQs5QZtrf9Dr2dGf6xSoYczJofHn0z_fQSxux9UGlsRg0kGCU1kBhXX22GUxs8zyPuiYmFaFVXoF94F2Ls",
+    "CHECKIN_TTL": "60",
+    "CHECKIN_SKEW": "5",
+    "CHECKIN_VALID_SECONDS": "1800",
+    "TEST_MODE": "true"
   }
 }

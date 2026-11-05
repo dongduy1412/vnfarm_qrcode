@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { checkinHttp } from './checkin-http';
 
 type Ping = { device_id: string; kid: string; iat: number; nonce: string; uptime: number; sig: string };
 type LinkState = { sequence: number; last_seen: number; uptime: number; nonce: string; kid: string };
@@ -54,6 +55,40 @@ export class DeviceLink extends DurableObject<Env> {
     super(ctx, env);
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY CHECK(id=1), sequence INTEGER NOT NULL, last_seen INTEGER NOT NULL, uptime INTEGER NOT NULL, nonce TEXT NOT NULL, kid TEXT NOT NULL)');
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS nonces (nonce TEXT PRIMARY KEY, seen INTEGER NOT NULL)');
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS test_sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires INTEGER NOT NULL)');
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS checkins (user_id TEXT NOT NULL, t INTEGER NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(user_id,t))');
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS checkin_limits (key TEXT PRIMARY KEY, bucket INTEGER NOT NULL, count INTEGER NOT NULL)');
+  }
+
+  createTestSession(tokenHash:string,user:string) {
+    if(this.env.TEST_MODE!=='true') throw Error('Test sessions disabled');
+    const now=Math.floor(Date.now()/1000);
+    this.ctx.storage.sql.exec('DELETE FROM test_sessions WHERE expires < ?',now);
+    this.ctx.storage.sql.exec('INSERT INTO test_sessions VALUES (?,?,?)',tokenHash,user,now+3600);
+  }
+  testUser(tokenHash:string):string|null {
+    if(this.env.TEST_MODE!=='true') return null;
+    return this.ctx.storage.sql.exec<{user_id:string}>('SELECT user_id FROM test_sessions WHERE token_hash=? AND expires>?',tokenHash,Math.floor(Date.now()/1000)).toArray()[0]?.user_id??null;
+  }
+  allowCheckin(ip:string,user:string):boolean {
+    const bucket=Math.floor(Date.now()/60000);
+    this.ctx.storage.sql.exec('DELETE FROM checkin_limits WHERE bucket < ?',bucket-1);
+    for(const [key,maximum] of [[`ip:${ip}`,60],[`user:${user}`,30]] as const) {
+      this.ctx.storage.sql.exec('INSERT INTO checkin_limits VALUES (?,?,1) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN bucket=excluded.bucket THEN count+1 ELSE 1 END,bucket=excluded.bucket',key,bucket);
+      if(this.ctx.storage.sql.exec<{count:number}>('SELECT count FROM checkin_limits WHERE key=?',key).one().count>maximum)return false;
+    }
+    return true;
+  }
+  recordCheckin(user:string,t:number) {
+    const now=Math.floor(Date.now()/1000),expires=now+Number(this.env.CHECKIN_VALID_SECONDS);
+    this.ctx.storage.sql.exec('DELETE FROM checkins WHERE expires < ?',now);
+    // A repeat of (user, did, t) never extends or duplicates this check-in.
+    this.ctx.storage.sql.exec('INSERT OR IGNORE INTO checkins VALUES (?,?,?)',user,t,expires);
+    return this.checkinStatus(user);
+  }
+  checkinStatus(user:string):{checkedIn:false}|{checkedIn:true;expiresAt:number;deviceId:string} {
+    const row=this.ctx.storage.sql.exec<{expires:number}>('SELECT expires FROM checkins WHERE user_id=? AND expires>? ORDER BY expires DESC LIMIT 1',user,Math.floor(Date.now()/1000)).toArray()[0];
+    return row?{checkedIn:true,expiresAt:row.expires,deviceId:this.env.DEVICE_ID}:{checkedIn:false};
   }
 
   async ping(p: Ping) {
@@ -86,6 +121,8 @@ export class DeviceLink extends DurableObject<Env> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const checkin=await checkinHttp(request,env);
+    if(checkin)return checkin;
     const path = new URL(request.url).pathname;
     if (path === '/health' && request.method === 'GET') return reply({ ok: true, service: 'vnfarm-device-link' });
     if (path !== `/api/devices/${env.DEVICE_ID}/ping` && path !== `/api/devices/${env.DEVICE_ID}/status`) return reply({ error: 'Not found' }, 404);
