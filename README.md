@@ -1,6 +1,6 @@
 # VNFARM · ESP32-S3 QR check-in
 
-Firmware **0.2.0**, ESP32-S3 mạch tím XH-S3E-AI + TFT ST7789 240×240.
+Firmware **0.2.1**, ESP32-S3 mạch tím XH-S3E-AI + TFT ST7789 240×240.
 Giao thức QR theo [contract mentor](docs/mentor/contract.md), với lựa chọn
 ECDSA P-256/SHA-256, public key raw uncompressed và chữ ký raw `r||s`, base64url.
 
@@ -33,6 +33,9 @@ Chi tiết: [giao thức](docs/QR_PROTOCOL.md), [báo cáo chuyển đổi](docs
 
 - Chưa setup: bắt `VNFARM-xxxxxx`, mật khẩu `12345678`, mở
   `http://192.168.4.1/`, nhập Wi-Fi 2.4 GHz và copy public key.
+- Trang setup chia hai bước: nút **Sao chép public key**/tải file, rồi chọn
+  mạng đã lưu hoặc thêm Wi-Fi. Có ẩn/hiện mật khẩu và trạng thái kết nối/lưu.
+  Giao diện tải trực tiếp từ board, không cần Internet; xem [setup UI](docs/SETUP_UI.md).
 - Nhớ tối đa 5 mạng, ưu tiên mạng lưu gần nhất; thử mạng tiếp theo sau 15 giây
   nếu chưa nối được. NVS giữ Wi-Fi và key qua restart.
 - Gửi `SETUP_WIFI` kèm newline qua USB để mở lại setup, giữ nguyên danh sách

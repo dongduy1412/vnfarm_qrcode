@@ -1,0 +1,2 @@
+# Optional headless browser checks for the firmware setup page.
+playwright==1.58.0

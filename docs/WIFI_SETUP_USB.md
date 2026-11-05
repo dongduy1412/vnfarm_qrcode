@@ -1,10 +1,15 @@
 # Change Wi-Fi using USB
 
-Current firmware 0.2.0 uses the contract-v1 QR endpoint fixed at build time:
+Current firmware 0.2.1 uses the contract-v1 QR endpoint fixed at build time:
 `https://vnfarm-qrcode-device-link.dong141220047.workers.dev/checkin`.
 The setup page exports **raw base64url** public keys. Historical notes below
 describe when the USB and multi-network features were introduced; key and
 Wi-Fi preservation behavior remains the same.
+
+The redesigned page includes **Sao chép public key**, a text-file download,
+saved-network selection, password visibility and inline connection/save status.
+See `SETUP_UI.md`. Clipboard fallback supports the HTTP setup origin; browsers
+that reject clipboard access receive manual selection/copy instructions.
 
 Firmware 0.1.6 accepts the ASCII command `SETUP_WIFI\n` over native USB CDC
 (COM5 on the current PC, 115200 baud). This is a local USB maintenance command.

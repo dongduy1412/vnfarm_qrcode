@@ -11,6 +11,7 @@
 #include "CloudLink.h"
 #include "SavedNetworks.h"
 #include "QrContract.h"
+#include "SetupPageAsset.h"
 
 namespace {
 DeviceKeys keys;
@@ -107,6 +108,7 @@ bool validUrl(const String& url) {
 
 void showPublicKey() {
   portal.sendHeader("Cache-Control", "no-store");
+  portal.sendHeader("Content-Disposition", "attachment; filename=public-key.txt");
   portal.send(200, "text/plain; charset=utf-8", keys.publicRaw());
 }
 
@@ -181,25 +183,20 @@ bool startPortal() {
   // RF is enabled before creating a signing key, to supply hardware RNG entropy.
   if (!keys.begin()) return false;
   portal.on("/", HTTP_GET, []() {
-    String page = "<!doctype html><html lang='vi'><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>"
-      "<title>Thiết lập thiết bị</title><body><h1>Thiết lập thiết bị</h1>";
-    page += "<p>Thiết bị: " + htmlEscape(deviceId) + "</p>";
-    page += "<p>Lưu public key này lên server trước khi sử dụng.</p><textarea readonly rows='5' cols='48'>";
-    page += htmlEscape(keys.publicRaw()) + "</textarea><p>ECDSA P-256 · raw uncompressed · base64url</p><p><a href='/public-key'>Tải public key</a></p>";
-    page += "<p>Tự nhớ tối đa 5 mạng. Khi bật nguồn sẽ thử lần lượt các mạng đã lưu, ưu tiên mạng lưu gần nhất.</p>";
-    if (networks.size()) {
-      page += "<form method='post' action='/save'><label>Mạng đã lưu <select name='saved'>";
-      for (size_t i = 0; i < networks.size(); ++i) {
-        String name = htmlEscape(String(networks.at(i).ssid));
-        page += "<option value='" + name + "'>" + name + "</option>";
-      }
-      page += "</select></label> <button>Kết nối lại, không cần nhập mật khẩu</button></form><hr>";
+    String page(FPSTR(SETUP_PAGE));
+    page.replace("{{DEVICE_ID}}", htmlEscape(deviceId));
+    page.replace("{{PUBLIC_KEY}}", htmlEscape(keys.publicRaw()));
+    page.replace("{{INTERVAL}}", String(qrSeconds));
+    page.replace("{{CHECKIN_URL}}", htmlEscape(checkinUrl));
+    page.replace("{{SAVED_HIDDEN}}", networks.size() ? "" : "hidden");
+    String options;
+    for (size_t i = 0; i < networks.size(); ++i) {
+      String name = htmlEscape(String(networks.at(i).ssid));
+      options += "<option value='" + name + "'>" + name + "</option>";
     }
-    page += "<h2>Thêm hoặc cập nhật mạng</h2><form method='post' action='/save'><p><label>Wi-Fi <input name='ssid' maxlength='32' required></label></p>"
-      "<p><label>Mật khẩu Wi-Fi <input name='password' type='password' maxlength='63'></label></p>"
-      "<p>URL check-in: " + htmlEscape(checkinUrl) + "</p>"
-      "<p><label>Chu kỳ đổi mã (giây) <input name='seconds' type='number' min='10' max='60' value='" + String(qrSeconds) + "' required></label></p>"
-      "<button>Lưu và khởi động lại</button></form></body></html>";
+    // User-controlled SSIDs are escaped and inserted last, so template-like
+    // text inside a saved SSID is never evaluated as another placeholder.
+    page.replace("{{SAVED_OPTIONS}}", options);
     portal.sendHeader("Cache-Control", "no-store");
     portal.send(200, "text/html; charset=utf-8", page);
   });
@@ -275,7 +272,7 @@ void setup() {
   deviceId = WiFi.macAddress();
   deviceId.replace(":", "");
   deviceId.toLowerCase();
-  Serial.printf("QR firmware 0.2.0 | device %s\n", deviceId.c_str());
+  Serial.printf("QR firmware 0.2.1 | device %s\n", deviceId.c_str());
   bool configured = loadConfig();
   bool networksReady = networks.load(wifiSsid, wifiPassword);
   Serial.printf("Saved Wi-Fi profiles: %u\n", static_cast<unsigned>(networks.size()));
