@@ -9,9 +9,11 @@
 #include "DeviceKeys.h"
 #include "Screen.h"
 #include "CloudLink.h"
+#include "SavedNetworks.h"
 
 namespace {
 DeviceKeys keys;
+SavedNetworks networks;
 WebServer portal(80);
 DNSServer portalDns;
 String wifiSsid, wifiPassword, checkinUrl, deviceId;
@@ -22,6 +24,9 @@ bool restartPending = false;
 bool timeReady = false;
 uint32_t restartAt = 0;
 uint32_t lastWifiAttempt = 0;
+size_t wifiIndex = 0;
+bool wifiWasConnected = false;
+bool waitingDisplayed = false;
 time_t displayedSlot = 0;
 String displayedKid;
 String usbCommand;
@@ -104,7 +109,14 @@ void saveSetup() {
   String password = portal.arg("password");
   String url = portal.arg("url");
   String secondsText = portal.arg("seconds");
-  ssid.trim();
+  if (portal.hasArg("saved")) {
+    int selected = networks.find(portal.arg("saved"));
+    if (selected < 0) { portal.send(400, "text/plain", "Mang chua duoc luu."); return; }
+    ssid = networks.at(selected).ssid;
+    password = networks.at(selected).password;
+    url = checkinUrl;
+    secondsText = String(qrSeconds);
+  }
   url.trim();
   bool digitsOnly = secondsText.length() > 0 && secondsText.length() <= 2;
   for (size_t i = 0; i < secondsText.length(); ++i)
@@ -123,6 +135,10 @@ void saveSetup() {
   if (WiFi.status() != WL_CONNECTED) {
     WiFi.disconnect();
     portal.send(400, "text/plain; charset=utf-8", "Khong ket noi duoc Wi-Fi. Kiem tra ten/mat khau va thu lai.");
+    return;
+  }
+  if (!networks.remember(ssid, password)) {
+    portal.send(500, "text/plain", "Khong luu duoc danh sach Wi-Fi. Hay thu lai.");
     return;
   }
   Preferences store;
@@ -164,10 +180,19 @@ bool startPortal() {
     page += "<p>Thiết bị: " + htmlEscape(deviceId) + "</p>";
     page += "<p>Lưu public key này lên server trước khi sử dụng.</p><textarea readonly rows='5' cols='48'>";
     page += htmlEscape(keys.publicPem()) + "</textarea><p><a href='/public-key'>Tải public key</a></p>";
-    page += "<form method='post' action='/save'><p><label>Wi-Fi <input name='ssid' maxlength='32' required></label></p>"
+    page += "<p>Tự nhớ tối đa 5 mạng. Khi bật nguồn sẽ thử lần lượt các mạng đã lưu, ưu tiên mạng lưu gần nhất.</p>";
+    if (networks.size()) {
+      page += "<form method='post' action='/save'><label>Mạng đã lưu <select name='saved'>";
+      for (size_t i = 0; i < networks.size(); ++i) {
+        String name = htmlEscape(String(networks.at(i).ssid));
+        page += "<option value='" + name + "'>" + name + "</option>";
+      }
+      page += "</select></label> <button>Kết nối lại, không cần nhập mật khẩu</button></form><hr>";
+    }
+    page += "<h2>Thêm hoặc cập nhật mạng</h2><form method='post' action='/save'><p><label>Wi-Fi <input name='ssid' maxlength='32' required></label></p>"
       "<p><label>Mật khẩu Wi-Fi <input name='password' type='password' maxlength='63'></label></p>"
-      "<p><label>URL web trò chơi <input name='url' type='url' maxlength='160' placeholder='Để trống để dùng URL mặc định của bản firmware'></label></p>"
-      "<p><label>Chu kỳ đổi mã (giây) <input name='seconds' type='number' min='10' max='60' value='30' required></label></p>"
+      "<p><label>URL web trò chơi <input name='url' type='url' maxlength='160' value='" + htmlEscape(checkinUrl) + "'></label></p>"
+      "<p><label>Chu kỳ đổi mã (giây) <input name='seconds' type='number' min='10' max='60' value='" + String(qrSeconds) + "' required></label></p>"
       "<button>Lưu và khởi động lại</button></form></body></html>";
     portal.sendHeader("Cache-Control", "no-store");
     portal.send(200, "text/html; charset=utf-8", page);
@@ -189,10 +214,16 @@ bool startPortal() {
   return true;
 }
 
-void connectWifi() {
+void connectWifi(bool next = false) {
+  if (!networks.size()) return;
+  if (next) wifiIndex = (wifiIndex + 1) % networks.size();
+  wifiSsid = networks.at(wifiIndex).ssid;
+  wifiPassword = networks.at(wifiIndex).password;
+  WiFi.disconnect(false, false);
   WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
   lastWifiAttempt = millis();
   Screen::status("DANG NOI WIFI", wifiSsid);
+  Serial.printf("Trying saved Wi-Fi %u/%u\n", static_cast<unsigned>(wifiIndex + 1), static_cast<unsigned>(networks.size()));
 }
 
 bool loadConfig() {
@@ -238,12 +269,17 @@ void setup() {
   Screen::begin();
   Serial.println("Display initialization returned; visual confirmation required.");
   WiFi.persistent(false);
+  WiFi.setAutoReconnect(false); // Our retry loop rotates through saved profiles.
   WiFi.mode(WIFI_STA);
   deviceId = WiFi.macAddress();
   deviceId.replace(":", "");
   deviceId.toLowerCase();
-  Serial.printf("QR firmware 0.1.9 | device %s\n", deviceId.c_str());
-  if (!loadConfig()) {
+  Serial.printf("QR firmware 0.1.10 | device %s\n", deviceId.c_str());
+  bool configured = loadConfig();
+  bool networksReady = networks.load(wifiSsid, wifiPassword);
+  Serial.printf("Saved Wi-Fi profiles: %u\n", static_cast<unsigned>(networks.size()));
+  if (!networksReady) Serial.println("Could not read/migrate Wi-Fi profiles; setup required.");
+  if (!configured || !networksReady || !networks.size()) {
     initialized = startPortal();
   } else {
     initialized = keys.begin();
@@ -268,19 +304,27 @@ void loop() {
     return;
   }
   if (WiFi.status() != WL_CONNECTED) {
+    if (wifiWasConnected) {
+      wifiWasConnected = false;
+      waitingDisplayed = false;
+      connectWifi(); // Retry the last successful profile before trying others.
+    }
     if (timeReady) {
       // Fail closed when offline until the team's offline policy is decided.
       timeReady = false;
       displayedSlot = 0;
       Screen::status("MAT KET NOI", "Dang thu lai Wi-Fi. Tam dung QR.");
     }
-    if (millis() - lastWifiAttempt >= WIFI_RETRY_MS) connectWifi();
+    if (millis() - lastWifiAttempt >= WIFI_RETRY_MS) connectWifi(true);
     delay(20);
     return;
   }
+  if (!wifiWasConnected) {
+    wifiWasConnected = true;
+    Serial.printf("Saved Wi-Fi connected: profile %u/%u\n", static_cast<unsigned>(wifiIndex + 1), static_cast<unsigned>(networks.size()));
+  }
   time_t now = time(nullptr);
   if (now < 1704067200) { // Unset time must never become a valid-looking QR.
-    static bool waitingDisplayed = false;
     if (!waitingDisplayed) {
       Screen::status("DONG BO GIO", "Dang cho server thoi gian...");
       waitingDisplayed = true;

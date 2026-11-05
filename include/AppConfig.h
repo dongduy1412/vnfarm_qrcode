@@ -22,7 +22,7 @@ static_assert(sizeof(SETUP_WIFI_PASSWORD) >= 9 && sizeof(SETUP_WIFI_PASSWORD) <=
 constexpr uint32_t DEFAULT_QR_SECONDS = 30;
 constexpr const char* NTP_PRIMARY = "time.google.com";
 constexpr const char* NTP_SECONDARY = "pool.ntp.org";
-constexpr uint32_t WIFI_RETRY_MS = 10000;
+constexpr uint32_t WIFI_RETRY_MS = 15000;
 constexpr uint8_t QR_MAX_VERSION = 13;
 constexpr size_t MAX_CHECKIN_URL_LENGTH = 160;
 #ifndef QR_ALLOW_HTTP_TEST

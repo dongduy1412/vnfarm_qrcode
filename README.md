@@ -1,6 +1,6 @@
 # Firmware QR check-in — mạch tím ESP32-S3
 
-Firmware **0.1.9** đã nạp và chạy trên board: QR màu đỏ phủ gần hết màn 240×240, logo lớn ở giữa, ECDSA P-256/SHA-256, NTP và chu kỳ mặc định 30 giây. Wi-Fi và bộ key lưu trong NVS. Đã thêm thử kết nối HTTPS ping/pong có chữ ký tới Cloudflare Durable Object mỗi 30 giây; xem [cloudflare/README.md](cloudflare/README.md). Xem `docs/BRANDED_QR.md` và `docs/WIFI_SETUP_USB.md` cho các thay đổi trước; `SETUP_REPORT.md` và `FIRMWARE_REVIEW.md` là báo cáo các giai đoạn trước.
+Firmware **0.1.10** đã nạp trên board: QR màu đỏ phủ gần hết màn 240×240, logo lớn ở giữa, ECDSA P-256/SHA-256, NTP và chu kỳ mặc định 30 giây. Bộ key và tối đa 5 mạng Wi-Fi lưu trong NVS; bật nguồn tự thử các mạng đã lưu, ưu tiên mạng lưu gần nhất. Xem [hướng dẫn Wi-Fi](docs/WIFI_SETUP_USB.md). Đã có thử kết nối HTTPS ping/pong có chữ ký tới Cloudflare Durable Object mỗi 30 giây; xem [cloudflare/README.md](cloudflare/README.md). `SETUP_REPORT.md` và `FIRMWARE_REVIEW.md` là báo cáo các giai đoạn trước.
 
 Đã kiểm tra 108 lượt giải mã ảnh từ chính bộ vẽ firmware, 23 test giao thức/web và thử Worker/DO. Board thật đã nhận pong; trạng thái trên Cloudflare báo online. Lệnh quản lý từ xa và tích hợp check-in thật trên website sự kiện chưa hoàn thành.
 
@@ -50,7 +50,7 @@ SCL/SDA trên module này là tín hiệu SPI clock/data, không dùng I2C. UART
 1. Chưa có cấu hình: Wi-Fi thiết lập `VNFARM-xxxxxx` hiện trong danh sách mạng trên điện thoại. Mật khẩu cố định theo người dùng: `12345678` (bản 0.1.4). Màn hình thiết bị hiện tên mạng, mật khẩu và QR mở trang cấu hình.
 2. Chọn mạng đó trong cài đặt Wi-Fi và nhập mật khẩu trên màn hình; sau khi kết nối, quét QR để mở `http://192.168.4.1/`, lấy public key và chỉnh thiết lập. QR chỉ chứa URL trang cấu hình, không chứa tên/mật khẩu mạng. Captive portal vẫn hỗ trợ mở trang tự động nếu điện thoại cho phép.
 3. Copy hoặc tải public key, đăng ký với phía server. Private key tự sinh trên thiết bị và lưu lại, không đưa ra trang web.
-4. Nhập Wi-Fi, URL check-in thật, chu kỳ đổi QR. Kiểm tra kết nối Wi-Fi thành công rồi mới lưu và khởi động lại.
+4. Nhập Wi-Fi mới hoặc chọn mạng đã lưu, URL check-in thật, chu kỳ đổi QR. Kiểm tra kết nối Wi-Fi thành công rồi mới lưu và khởi động lại. Tối đa 5 mạng; nhập lại cùng SSID sẽ cập nhật mật khẩu.
 5. Lần bật sau: tự nối Wi-Fi, lấy giờ chuẩn, tạo chữ ký và hiển thị QR động. Trang thiết lập và Wi-Fi AP tắt trong chế độ chạy thường.
 6. Chưa có giờ chuẩn, chưa có URL hoặc mất mạng: không phát QR check-in.
 
