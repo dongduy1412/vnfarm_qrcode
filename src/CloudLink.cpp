@@ -1,5 +1,7 @@
 #include "CloudLink.h"
-#include "CloudRootCA.h"
+#include "ServerConfig.h"
+#include "ServerOrigin.h"
+#include "WorkerRootCAs.h"
 #include "WifiCommandState.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -8,11 +10,9 @@
 #include <esp_system.h>
 #include <time.h>
 
-#ifndef QR_CLOUD_BASE_URL
-#define QR_CLOUD_BASE_URL "https://vnfarm-qrcode-device-link.dong141220047.workers.dev"
-#endif
-
 namespace {
+String managementOrigin;
+bool heartbeatEnabled = false;
 enum Kind { Ping,Poll,Ack };
 struct Message { Kind kind;char body[640];char device[33];char nonce[33];char cmdId[65]; };
 QueueHandle_t messages=nullptr,events=nullptr;
@@ -31,12 +31,15 @@ void sendTask(void*) {
   while(true) {
     if(xQueueReceive(messages,&message,portMAX_DELAY)!=pdTRUE)continue;
     if(WiFi.status()!=WL_CONNECTED)continue;
-    WiFiClientSecure tls;tls.setCACert(CLOUD_ROOT_CA);tls.setHandshakeTimeout(5);
+    WiFiClientSecure tls;tls.setCACert(WORKER_ROOT_CAS);tls.setHandshakeTimeout(5);
     HTTPClient http;http.setConnectTimeout(4000);http.setTimeout(4000);http.setReuse(false);
     http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
-    http.setUserAgent("Mozilla/5.0 (compatible; VNFARM-ESP32/0.3.0)");
+    http.setUserAgent("Mozilla/5.0 (compatible; VNFARM-ESP32/0.3.3)");
     String path=message.kind==Ping?String("/api/devices/")+message.device+"/ping":message.kind==Poll?"/api/device/poll":"/api/device/ack";
-    if(!http.begin(tls,String(QR_CLOUD_BASE_URL)+path)){Serial.println("DO HTTP initialization failed");continue;}
+    WiFiClient lan;
+    bool started = managementOrigin.startsWith("https://") ?
+        http.begin(tls, managementOrigin + path) : http.begin(lan, managementOrigin + path);
+    if(!started){Serial.println("DO HTTP initialization failed");continue;}
     http.addHeader("Content-Type","application/json");
     int code=http.POST(reinterpret_cast<uint8_t*>(message.body),strlen(message.body));
     bool valid=false;
@@ -95,13 +98,19 @@ bool submit(Kind kind,DeviceKeys& keys,const String& deviceId,const char* cmdId=
 }
 }
 
-bool CloudLink::begin() {
-  if(messages)return true;
+bool CloudLink::begin(const String& origin, bool enableHeartbeat) {
+  if(messages)return managementOrigin == origin && heartbeatEnabled == enableHeartbeat;
+  if(origin.length() > 160 || !ServerOrigin::valid(origin.c_str())) return false;
+  managementOrigin = origin;
+  heartbeatEnabled = enableHeartbeat;
+  if(origin.startsWith("http://")) Serial.println("WARNING: LAN HTTP test mode; server commands are not TLS authenticated. Use only a trusted test LAN.");
   messages=xQueueCreate(3,sizeof(Message));events=xQueueCreate(4,sizeof(Event));
   if(!messages||!events||xTaskCreate(sendTask,"cloud-link",12288,nullptr,1,nullptr)!=pdPASS) {
     if(messages)vQueueDelete(messages);if(events)vQueueDelete(events);messages=nullptr;events=nullptr;return false;
   }
-  Serial.printf("DO link endpoint: %s\n",QR_CLOUD_BASE_URL);return true;
+  Serial.printf("Device management endpoint: %s | polling=%lu ms | test heartbeat=%s\n",
+      managementOrigin.c_str(), ServerConfig::pollIntervalMs,
+      heartbeatEnabled ? "on" : "off");return true;
 }
 bool CloudLink::acknowledge(DeviceKeys& keys,const String& deviceId,const char* cmdId) {
   if(!submit(Ack,keys,deviceId,cmdId))return false;
@@ -111,8 +120,8 @@ bool CloudLink::nextEvent(Event& event){return events&&xQueueReceive(events,&eve
 void CloudLink::tick(DeviceKeys& keys,const String& deviceId,const char* pendingAck) {
   uint32_t now=millis();
   if(pendingAck&&strlen(pendingAck)&&(!ackSent||static_cast<uint32_t>(now-ackAt)>=10000))acknowledge(keys,deviceId,pendingAck);
-  if(!pingSent||static_cast<uint32_t>(now-pingAt)>=30000){if(submit(Ping,keys,deviceId)){pingSent=true;pingAt=now;}}
-  if((!pendingAck||!strlen(pendingAck))&&(!pollSent||static_cast<uint32_t>(now-pollAt)>=60000)) {
+  if(heartbeatEnabled&&(!pingSent||static_cast<uint32_t>(now-pingAt)>=30000)){if(submit(Ping,keys,deviceId)){pingSent=true;pingAt=now;}}
+  if((!pendingAck||!strlen(pendingAck))&&(!pollSent||static_cast<uint32_t>(now-pollAt)>=ServerConfig::pollIntervalMs)) {
     if(submit(Poll,keys,deviceId)){pollSent=true;pollAt=now;}
   }
 }

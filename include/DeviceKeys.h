@@ -13,6 +13,7 @@ class DeviceKeys {
   bool signQr(const String& data, String& signature);
   String publicPem();
   String publicRaw();
+  String serverKeyId();
   const String& keyId() const { return keyId_; }
  private:
   mbedtls_pk_context key_;

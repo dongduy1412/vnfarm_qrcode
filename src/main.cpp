@@ -6,7 +6,12 @@
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <time.h>
+#include <esp_sntp.h>
+#include "NtpGate.h"
 #include "AppConfig.h"
+#include "ServerOrigin.h"
+#include "WebSocketLink.h"
+#include "Enrollment.h"
 #include "DeviceKeys.h"
 #include "Screen.h"
 #include "CloudLink.h"
@@ -19,14 +24,26 @@ namespace {
 DeviceKeys keys;
 SavedNetworks networks;
 WifiCommands wifiCommands;
+Enrollment enrollment;
+bool projectMode=false,identityInitialized=false,websocketStarted=false;
+String enrollmentScreen;
 WebServer portal(80);
 DNSServer portalDns;
 String wifiSsid, wifiPassword, checkinUrl, deviceId;
+String workerOrigin = ServerConfig::managementOrigin;
+bool workerHeartbeat = ServerConfig::heartbeatEnabled;
 uint32_t qrSeconds = DEFAULT_QR_SECONDS;
 bool provisioning = false;
 bool initialized = false;
 bool restartPending = false;
 bool timeReady = false;
+NtpGate ntpGate;
+uint32_t loggedNtpSync = 0;
+uint32_t ntpWaitLogAt = 0;
+void onNtpSync(struct timeval* value) {
+  // Runs on the SNTP task. No display, NVS or Serial work here.
+  if (value) ntpGate.synchronized(value->tv_sec);
+}
 uint32_t restartAt = 0;
 uint32_t lastWifiAttempt = 0;
 size_t wifiIndex = 0;
@@ -81,7 +98,7 @@ void handleUsbSetup() {
     char ch = static_cast<char>(Serial.read());
     if (ch == '\r') continue;
     if (ch != '\n') {
-      if (usbCommand.length() < 32) usbCommand += ch;
+      if (usbCommand.length() < 192) usbCommand += ch;
       else usbCommand = "INVALID";
       continue;
     }
@@ -99,11 +116,57 @@ void handleUsbSetup() {
         ESP.restart();
       } else Serial.println("Could not enable Wi-Fi setup.");
     }
+    if (usbCommand == "WIPE_WIFI") {
+      // Explicit local maintenance: works offline, preserves key/server settings.
+      char id[48];
+      snprintf(id, sizeof(id), "c_usb_%08lx_%08lx", static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(millis()));
+      auto result = wifiCommands.accept(id, "wipe_wifi", WiFi.SSID(), networks);
+      if (result == WifiCommands::Applied && wifiCommands.acknowledge(id)) {
+        Serial.println("USB Wi-Fi wipe complete; saved profiles=0; key/server preserved. Restarting.");
+        Serial.flush();
+        esp_wifi_set_storage(WIFI_STORAGE_FLASH);
+        WiFi.disconnect(false, true);
+        esp_wifi_set_storage(WIFI_STORAGE_RAM);
+        delay(100);
+        ESP.restart();
+      } else Serial.println("USB Wi-Fi wipe failed; inspect storage before retrying.");
+    }
+    if (usbCommand.startsWith("SERVER_URL ")) {
+      // USB lab convenience; the normal operator flow uses the setup form.
+      String origin=usbCommand.substring(11);origin.trim();
+      while(origin.endsWith("/"))origin.remove(origin.length()-1);
+      if(ServerOrigin::valid(origin.c_str())&&origin.length()<=160){
+        Preferences store;bool ok=store.begin("qr-config",false);
+        if(ok){
+          bool configured=store.getBool("configured",false);String url=origin+"/checkin";
+          ok=store.putBool("configured",false)==1&&store.putString("worker",origin)==origin.length()&&
+              store.putString("url",url)==url.length()&&store.putBool("heartbeat",false)==1&&
+              store.putUInt("server_v",1)==sizeof(uint32_t);
+          if(ok)ok=store.putBool("configured",configured)==1;
+          store.end();
+        }
+        if(ok){Serial.println("Server URL saved; Wi-Fi/key preserved. Restarting.");Serial.flush();delay(100);ESP.restart();}
+        else Serial.println("Server URL save failed; setup required.");
+      }else Serial.println("Invalid server origin; not saved.");
+    }
+    if (usbCommand == "DEVICE_INFO") {
+      Serial.printf("Device info: firmware=0.4.1 did=%s server=%s setup=%d wifi=%d ntp=%lu identity=%d ws=%d status=%s\n",
+          deviceId.c_str(),workerOrigin.c_str(),provisioning,static_cast<int>(WiFi.status()),
+          static_cast<unsigned long>(ntpGate.lastSync()),enrollment.ready(),WebSocketLink::isConnected(),enrollment.status().c_str());
+    }
     if (usbCommand == "QR_INFO") {
-      if (initialized && !provisioning && timeReady && WiFi.status() == WL_CONNECTED && displayedUrl.length()) {
+      if (initialized && !provisioning && !remoteRestartPending && timeReady && ntpGate.ready(time(nullptr)) && WiFi.status() == WL_CONNECTED && displayedUrl.length()) {
         // Explicit USB diagnostic for interoperability tests; routine logs omit sig.
         Serial.printf("QR public key: %s\nQR test URL: %s\n", keys.publicRaw().c_str(), displayedUrl.c_str());
-      } else Serial.println("QR not ready; complete Wi-Fi setup and NTP first.");
+      } else {
+        const char* reason = !initialized ? "initialization" : provisioning ? "setup" :
+            remoteRestartPending ? "remote_restart" : WiFi.status() != WL_CONNECTED ? "wifi" :
+            !ntpGate.ready(time(nullptr)) ? "ntp" : !timeReady ? "loop_pending" : "qr_render";
+        Serial.printf("QR not ready; reason=%s init=%d portal=%d time=%d wifi=%d url=%u ntp=%lu uptime_ms=%lu reset=%d\n",
+            reason, initialized, provisioning, timeReady, static_cast<int>(WiFi.status()),
+            static_cast<unsigned>(displayedUrl.length()), static_cast<unsigned long>(ntpGate.lastSync()),
+            static_cast<unsigned long>(millis()), static_cast<int>(esp_reset_reason()));
+      }
     }
     usbCommand = "";
   }
@@ -119,28 +182,11 @@ String htmlEscape(String input) {
 }
 
 bool validUrl(const String& url) {
-  // Contract v1 has a fixed /checkin route and no fragment or existing query.
+  // The operator selects the origin; route remains /checkin.
   if (url.length() == 0) return false;
   if (url.indexOf('#') >= 0 || !url.endsWith("/checkin")) return false;
   if (url.length() > MAX_CHECKIN_URL_LENGTH) return false;
-  String address = url;
-  bool https = address.startsWith("https://") && address.length() > 8;
-  bool localHttp = false;
-#if QR_ALLOW_HTTP_TEST
-  if (address.startsWith("http://")) {
-    String host = address.substring(7);
-    int slash = host.indexOf('/');
-    if (slash >= 0) host = host.substring(0, slash);
-    int colon = host.indexOf(':');
-    if (colon >= 0) host = host.substring(0, colon);
-    IPAddress ip;
-    if (ip.fromString(host)) {
-      localHttp = ip[0] == 10 || (ip[0] == 192 && ip[1] == 168) ||
-          (ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31);
-    }
-  }
-#endif
-  if ((!https && !localHttp) || url.indexOf('?') >= 0 || url.indexOf('@') >= 0) return false;
+  if (!ServerOrigin::valid(url.substring(0, url.length() - 8).c_str())) return false;
   for (size_t i = 0; i < url.length(); ++i)
     if (url[i] <= 32 || url[i] >= 127) return false;
   return true;
@@ -153,17 +199,28 @@ void showPublicKey() {
 }
 
 void saveSetup() {
+  Serial.printf("SETUP save received: uptime_ms=%lu mode=%s\n", static_cast<unsigned long>(millis()), portal.hasArg("saved") ? "saved-network" : "new-network");
   String ssid = portal.arg("ssid");
   String password = portal.arg("password");
-  String url = DEFAULT_CHECKIN_URL; // Fixed trusted host/route for this build.
+  String origin = portal.hasArg("worker") ? portal.arg("worker") : workerOrigin;
+  origin.trim();
+  while (origin.endsWith("/")) origin.remove(origin.length() - 1);
+  String url = portal.hasArg("checkin") ? portal.arg("checkin") : checkinUrl;
+  url.trim();
+  if (url.isEmpty()) url = origin + "/checkin";
+  bool heartbeat = portal.hasArg("worker") ? portal.arg("heartbeat") == "1" : workerHeartbeat;
+  if (origin.length() > 160 || !ServerOrigin::valid(origin.c_str()) || !validUrl(url)) {
+    Serial.println("SETUP rejected: invalid server URL");
+    portal.send(400, "text/plain; charset=utf-8", "Link goc phai la HTTPS hoac HTTP IP LAN, co the kem port 1-65535. Khong them path/query. Link QR ket thuc /checkin.");
+    return;
+  }
   String secondsText = portal.arg("seconds");
   if (portal.hasArg("saved")) {
     int selected = networks.find(portal.arg("saved"));
     if (selected < 0) { portal.send(400, "text/plain", "Mang chua duoc luu."); return; }
     ssid = networks.at(selected).ssid;
     password = networks.at(selected).password;
-    url = checkinUrl;
-    secondsText = String(qrSeconds);
+    if (!portal.hasArg("seconds")) secondsText = String(qrSeconds);
   }
   url.trim();
   bool digitsOnly = secondsText.length() > 0 && secondsText.length() <= 2;
@@ -173,18 +230,24 @@ void saveSetup() {
   if (ssid.isEmpty() || ssid.length() > 32 || password.length() > 63 ||
       (!password.isEmpty() && password.length() < 8) || !validUrl(url) ||
       !digitsOnly || seconds < 10 || seconds > 60) {
+    Serial.println("SETUP rejected: invalid Wi-Fi/interval fields");
     portal.send(400, "text/plain; charset=utf-8", "Thong tin khong hop le. Chu ky 10-60 giay; kiem tra URL va Wi-Fi.");
     return;
   }
+  // Log state only, never Wi-Fi passwords or request bodies.
+  Serial.println("SETUP Wi-Fi connection test starting (15s deadline)");
   // Do not commit credentials before testing them, so a typo cannot lock setup.
   WiFi.begin(ssid.c_str(), password.c_str());
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) delay(50);
   if (WiFi.status() != WL_CONNECTED) {
+    int status = static_cast<int>(WiFi.status());
+    Serial.printf("SETUP Wi-Fi connection failed: status=%d elapsed_ms=%lu\n", status, static_cast<unsigned long>(millis()-start));
     WiFi.disconnect();
-    portal.send(400, "text/plain; charset=utf-8", "Khong ket noi duoc Wi-Fi. Kiem tra ten/mat khau va thu lai.");
+    portal.send(400, "text/plain; charset=utf-8", String("WIFI_CONNECT_FAILED: status=") + status + ". Khong ket noi duoc Wi-Fi trong 15s. Kiem tra mang 2.4 GHz, ten/mat khau.");
     return;
   }
+  Serial.println("SETUP Wi-Fi connected; saving profiles/configuration");
   if (!networks.remember(ssid, password)) {
     portal.send(500, "text/plain", "Khong luu duoc danh sach Wi-Fi. Hay thu lai.");
     return;
@@ -198,16 +261,24 @@ void saveSetup() {
   ok = ok && store.putString("ssid", ssid) == ssid.length() &&
       store.putString("pass", password) == password.length() &&
       store.putString("url", url) == url.length() &&
+      store.putString("worker", origin) == origin.length() &&
+      store.putBool("heartbeat", heartbeat) == 1 &&
+      store.putUInt("server_v", 1) == sizeof(uint32_t) &&
       store.putUInt("interval", seconds) == sizeof(uint32_t) && store.putBool("fallback",false)==1;
   ok = ok && store.getString("ssid", "__missing") == ssid &&
       store.getString("pass", "__missing") == password &&
-      store.getString("url", "__missing") == url && store.getUInt("interval", 0) == seconds;
+      store.getString("url", "__missing") == url &&
+      store.getString("worker", "__missing") == origin &&
+      store.getBool("heartbeat", !heartbeat) == heartbeat &&
+      store.getUInt("server_v", 0) == 1 && store.getUInt("interval", 0) == seconds;
   if (ok) ok = store.putBool("configured", true) == 1;
   store.end();
   if (!ok) {
+    Serial.println("SETUP config write/readback failed");
     portal.send(500, "text/plain", "Luu cau hinh that bai. Chua danh dau thiet lap thanh cong.");
     return;
   }
+  Serial.println("SETUP configuration saved; restart in 2 seconds (Worker API not yet verified)");
   portal.send(200, "text/plain; charset=utf-8", "Da luu. Thiet bi se khoi dong lai. Hay luu public key vao server truoc khi choi.");
   restartPending = true;
   restartAt = millis() + 2000;
@@ -228,6 +299,8 @@ bool startPortal() {
     page.replace("{{PUBLIC_KEY}}", htmlEscape(keys.publicRaw()));
     page.replace("{{INTERVAL}}", String(qrSeconds));
     page.replace("{{CHECKIN_URL}}", htmlEscape(checkinUrl));
+    page.replace("{{WORKER_ORIGIN}}", htmlEscape(workerOrigin));
+    page.replace("{{HEARTBEAT_CHECKED}}", workerHeartbeat ? "checked" : "");
     page.replace("{{SAVED_HIDDEN}}", networks.size() ? "" : "hidden");
     String options;
     for (size_t i = 0; i < networks.size(); ++i) {
@@ -276,18 +349,17 @@ bool loadConfig() {
   wifiSsid = store.getString("ssid", "");
   wifiPassword = store.getString("pass", "");
   checkinUrl = store.getString("url", "");
-  // Migrate older saved endpoints to this build's trusted contract URL.
-  // Keep saved Wi-Fi credentials, profiles and signing key intact.
-  if (checkinUrl != DEFAULT_CHECKIN_URL) {
-    checkinUrl = DEFAULT_CHECKIN_URL;
-    if (store.putString("url", checkinUrl) != checkinUrl.length())
-      Serial.println("Could not persist new QR URL; using it for this boot.");
-  }
-  if (checkinUrl.isEmpty()) checkinUrl = DEFAULT_CHECKIN_URL;
+  // Old builds forced the compile-time URL. Migrate once, never overwrite
+  // a server selected by the operator on subsequent boots or app uploads.
+  bool customServer = store.getUInt("server_v", 0) == 1;
+  workerOrigin = customServer ? store.getString("worker", "") : ServerConfig::managementOrigin;
+  workerHeartbeat = customServer ? store.getBool("heartbeat", false) : ServerConfig::heartbeatEnabled;
+  if (!customServer) checkinUrl = DEFAULT_CHECKIN_URL;
   qrSeconds = store.getUInt("interval", DEFAULT_QR_SECONDS);
   wifiFallbackToSetup=store.getBool("fallback",false);
   store.end();
-  return configured && !wifiSsid.isEmpty() && qrSeconds >= 10 && qrSeconds <= 60 && validUrl(checkinUrl);
+  return configured && !wifiSsid.isEmpty() && qrSeconds >= 10 && qrSeconds <= 60 && validUrl(checkinUrl) &&
+      workerOrigin.length() <= 160 && ServerOrigin::valid(workerOrigin.c_str());
 }
 
 // Provisional server contract: docs/QR_PROTOCOL.md. This is NOT JWT or TOTP.
@@ -313,7 +385,7 @@ void setup() {
   deviceId = WiFi.macAddress();
   deviceId.replace(":", "");
   deviceId.toLowerCase();
-  Serial.printf("QR firmware 0.3.0 | device %s\n", deviceId.c_str());
+  Serial.printf("QR firmware 0.4.1 | device %s\n", deviceId.c_str());
   bool configured = loadConfig();
   bool networksReady = networks.load(wifiSsid, wifiPassword);
   if(!networksReady||!wifiCommands.begin(networks)) {
@@ -331,10 +403,17 @@ void setup() {
     initialized = keys.begin();
     if (initialized) {
       // The setup HTTP server and AP stay off in normal operation.
+      sntp_set_time_sync_notification_cb(onNtpSync);
+      sntp_set_sync_interval(NTP_SYNC_INTERVAL_MS);
       configTime(0, 0, NTP_PRIMARY, NTP_SECONDARY);
+      Serial.println("NTP: waiting for successful sync in this boot; periodic interval=3600s");
       connectWifi();
       wifiSearchStarted=millis();
-      if (!CloudLink::begin()) Serial.println("DO link initialization failed; QR remains available.");
+      projectMode = workerOrigin != "https://vnfarm-qrcode-device-link.dong141220047.workers.dev";
+      if(projectMode){
+        identityInitialized=enrollment.begin(workerOrigin,keys,deviceId);
+        if(!identityInitialized){Serial.println("Identity storage invalid; enrollment blocked");Screen::status("LOI IDENTITY","Kiem tra cau hinh server / bo nho.");}
+      }else if(!CloudLink::begin(workerOrigin,workerHeartbeat))Serial.println("Lab cloud link initialization failed");
     }
   }
   if (!initialized) Screen::status("LOI KHOI TAO", "Khong phat QR. Kiem tra log USB.");
@@ -368,7 +447,9 @@ void loop() {
     if (timeReady) {
       // Fail closed when offline until the team's offline policy is decided.
       timeReady = false;
+      displayedUrl = "";
       displayedSlot = 0;
+      Serial.printf("QR paused: wifi=%d uptime_ms=%lu\n", static_cast<int>(WiFi.status()), static_cast<unsigned long>(millis()));
       Screen::status("MAT KET NOI", "Dang thu lai Wi-Fi. Tam dung QR.");
     }
     if (millis() - lastWifiAttempt >= WIFI_RETRY_MS) connectWifi(true);
@@ -384,19 +465,54 @@ void loop() {
     }
   }
   time_t now = time(nullptr);
-  if (now < 1704067200) { // Unset time must never become a valid-looking QR.
+  if (!ntpGate.ready(now)) {
+    timeReady = false;
+    displayedUrl = "";
+    displayedSlot = 0;
     if (!waitingDisplayed) {
-      Screen::status("DONG BO GIO", "Dang cho server thoi gian...");
+      Screen::status("DONG BO GIO", "Dang cho NTP...\nChua phat QR. Tu dong thu lai.");
       waitingDisplayed = true;
+    }
+    if (static_cast<uint32_t>(millis()-ntpWaitLogAt)>=60000) {
+      Serial.println("NTP not synchronized; QR blocked, SNTP continues retrying");
+      ntpWaitLogAt=millis();
     }
     delay(50);
     return;
+  }
+  waitingDisplayed = false;
+  uint32_t confirmedSync = ntpGate.lastSync();
+  if (confirmedSync != loggedNtpSync) {
+    Serial.printf("NTP sync confirmed: epoch=%lu uptime_ms=%lu interval_ms=%lu\n",static_cast<unsigned long>(confirmedSync),static_cast<unsigned long>(millis()),static_cast<unsigned long>(sntp_get_sync_interval()));
+    loggedNtpSync = confirmedSync;
   }
   if (!timeReady) {
     timeReady = true;
     Serial.println("Time available. Public key fingerprint:");
     Serial.println(keys.keyId());
     if (checkinUrl.isEmpty()) Screen::status("CHUA CO URL", "Chua phat QR check-in.\nCan cau hinh URL cua server.");
+  }
+  if(projectMode){
+    if(!identityInitialized){delay(50);return;}
+    enrollment.tick(keys);
+    if(!enrollment.ready()){
+      if(enrollmentScreen!=enrollment.status()){
+        enrollmentScreen=enrollment.status();Screen::status(enrollmentScreen,"Tu dong xac thuc voi server.");
+      }
+      delay(20);return;
+    }
+    deviceId=enrollment.deviceId();qrSeconds=30;
+    if(!websocketStarted){
+      websocketStarted=WebSocketLink::begin(workerOrigin,deviceId,enrollment.token(),enrollment.keyId());
+      if(!websocketStarted){Screen::status("LOI WEBSOCKET","Khong khoi tao duoc ket noi.");delay(1000);return;}
+    }
+    WebSocketLink::tick();
+    if(!WebSocketLink::isConnected()){
+      displayedUrl="";displayedSlot=0;
+      if(enrollmentScreen!="DANG NOI SERVER"){enrollmentScreen="DANG NOI SERVER";Screen::status(enrollmentScreen,"Dang cho xac nhan BOOT...");}
+      delay(20);return;
+    }
+    enrollmentScreen="";
   }
   if (checkinUrl.isEmpty()) { delay(100); return; }
   time_t slot = now / qrSeconds;
@@ -414,7 +530,7 @@ void loop() {
         static_cast<unsigned long>(QrContract::timestamp(static_cast<uint32_t>(now), qrSeconds)), static_cast<unsigned long>(qrSeconds));
     Serial.printf("QR target: %s\n", checkinUrl.c_str());
   }
-  CloudLink::tick(keys, deviceId,wifiCommands.pendingAck());
+  if(!projectMode)CloudLink::tick(keys, deviceId,wifiCommands.pendingAck());
   delay(20);
 }
 

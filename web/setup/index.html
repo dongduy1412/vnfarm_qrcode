@@ -38,12 +38,12 @@
   <header class="topbar"><div class="top-inner"><div class="brand"><span class="mark" aria-hidden="true">V</span>VN FARM</div><span class="badge"><span class="dot" aria-hidden="true"></span>Chế độ thiết lập</span></div></header>
   <main>
     <p class="eyebrow">Chào mừng bạn</p><h1>Kết nối thiết bị.</h1>
-    <p class="intro">Lưu public key để đăng ký thiết bị, sau đó kết nối Wi-Fi. Thiết bị sẽ tự ghi nhớ cho những lần bật nguồn tiếp theo.</p>
+    <p class="intro">Nhập Wi-Fi và URL server, rồi kết nối. Thiết bị tự đăng ký và lưu quyền kết nối; không cần nhập device token.</p>
     <div class="device">Thiết bị <code>{{DEVICE_ID}}</code></div>
     <div class="layout">
       <section class="card" aria-labelledby="key-heading">
-        <div class="step-heading"><span class="step">01</span><h2 id="key-heading">Lưu public key</h2></div>
-        <p class="description">Sao chép khóa này để đăng ký thiết bị với hệ thống sự kiện.</p>
+        <div class="step-heading"><span class="step">01</span><h2 id="key-heading">Public key của thiết bị</h2></div>
+        <p class="description">Thiết bị tự gửi public key để đăng ký với server dự án. Bạn vẫn có thể sao chép khóa khi cần đối chiếu.</p>
         <label class="key-label" for="public-key">Public key <small>KHÓA CÔNG KHAI</small></label>
         <textarea id="public-key" readonly spellcheck="false" autocapitalize="off" aria-describedby="key-hint">{{PUBLIC_KEY}}</textarea>
         <div class="key-actions"><button class="button primary" id="copy-key" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M15 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3"/></svg><span id="copy-label">Sao chép public key</span></button><a class="button secondary" id="download-key" href="/public-key" download="public-key.txt">Tải file</a></div>
@@ -54,13 +54,18 @@
       <section class="card" aria-labelledby="wifi-heading">
         <div class="step-heading"><span class="step">02</span><h2 id="wifi-heading">Kết nối Wi-Fi</h2></div>
         <p class="description">Chọn mạng đã lưu hoặc nhập một mạng Wi-Fi 2.4 GHz mới.</p>
+        <div class="field"><label for="worker">Link Worker dự án</label><input id="worker" name="worker" form="new-network" type="url" maxlength="160" value="{{WORKER_ORIGIN}}" placeholder="https://worker-cua-ban.workers.dev" required spellcheck="false" autocapitalize="none"></div>
+
+        <details class="settings"><summary>Server nâng cao</summary><div class="field"><label for="checkin">URL check-in</label><input id="checkin" name="checkin" form="new-network" type="url" maxlength="160" value="{{CHECKIN_URL}}" required><p class="hint">Mặc định Worker + /checkin. Có thể dùng host khác nếu dự án yêu cầu.</p></div><label><input id="heartbeat" name="heartbeat" form="new-network" type="checkbox" value="1" {{HEARTBEAT_CHECKED}} style="width:20px;height:20px;vertical-align:middle"> Ping/pong cho Worker test cũ</label><p class="hint">Server dự án dùng WebSocket tự động; tùy chọn này chỉ dành cho Worker test cũ. HTTPS luôn kiểm tra chứng chỉ. HTTP chỉ dành cho IP LAN trong mạng test tin cậy, không có bảo vệ TLS. Nếu không kết nối được, mở lại setup qua USB để sửa link.</p></details>
+        <label><input id="allow-http" type="checkbox" style="width:20px;height:20px;vertical-align:middle"> Tôi chấp nhận HTTP không mã hóa, chỉ dùng mạng LAN test tin cậy.</label>
+        <noscript><p class="notice error">JavaScript chưa hoạt động. Mở http://192.168.4.1/ bằng Chrome/Safari thay vì cửa sổ đăng nhập Wi-Fi.</p></noscript>
         <div class="saved" {{SAVED_HIDDEN}}>
           <p class="saved-title">Kết nối nhanh với mạng đã lưu</p>
-          <form method="post" action="/save" data-connect-form><label for="saved-network" class="label">Mạng đã lưu</label><div class="saved-row"><select id="saved-network" name="saved" required>{{SAVED_OPTIONS}}</select><button class="button secondary" type="submit">Kết nối lại</button></div></form>
+          <form method="post" action="/save" data-connect-form novalidate><label for="saved-network" class="label">Mạng đã lưu</label><div class="saved-row"><select id="saved-network" name="saved" required>{{SAVED_OPTIONS}}</select><button class="button secondary" type="submit">Kết nối lại</button></div></form>
           <p class="hint">Sử dụng mật khẩu đã lưu trên thiết bị.</p>
         </div>
         <div class="divider" {{SAVED_HIDDEN}}>HOẶC THÊM MẠNG</div>
-        <form id="new-network" method="post" action="/save" data-connect-form>
+        <form id="new-network" method="post" action="/save" data-connect-form novalidate>
           <div class="field"><label for="ssid">Tên mạng Wi-Fi</label><input id="ssid" name="ssid" placeholder="Nhập chính xác tên mạng" maxlength="32" autocomplete="off" spellcheck="false" autocapitalize="none" required></div>
           <div class="field"><label for="password">Mật khẩu Wi-Fi</label><div class="password"><input id="password" name="password" type="password" minlength="8" maxlength="63" autocomplete="off" placeholder="Nhập mật khẩu mạng"><button class="show-password" id="show-password" type="button" aria-label="Hiện mật khẩu" aria-pressed="false">Hiện</button></div><p class="hint">Để trống nếu mạng không có mật khẩu.</p></div>
           <details class="settings"><summary>Cài đặt thêm</summary><div class="interval"><label for="seconds">Chu kỳ đổi QR<span>Thời gian giữa hai lần thay mã, từ 10–60 giây.</span></label><input id="seconds" name="seconds" type="number" inputmode="numeric" min="10" max="60" value="{{INTERVAL}}" required></div><p class="endpoint"><span>Địa chỉ check-in</span>{{CHECKIN_URL}}</p></details>
@@ -73,26 +78,56 @@
   </main>
   <script>
     const key=document.getElementById('public-key');
-    function notice(id,text,kind){const el=document.getElementById(id);el.textContent=text;el.className='notice '+kind;el.hidden=false;return el;}
+    function notice(id,text,kind){const el=document.getElementById(id);el.textContent=text;el.className='notice '+kind;el.hidden=false;if(id==='save-status'){el.scrollIntoView({block:'center'});el.focus({preventScroll:true});}return el;}
+    window.addEventListener('error',()=>notice('save-status','Lỗi JavaScript. Mở lại trang bằng Chrome/Safari và tải lại.','error'));
+    window.addEventListener('unhandledrejection',()=>notice('save-status','Lỗi xử lý trình duyệt. Mở trang bằng Chrome/Safari rồi thử lại.','error'));
     document.getElementById('copy-key').addEventListener('click',async()=>{
       let copied=false;
       if(window.isSecureContext&&navigator.clipboard){try{await navigator.clipboard.writeText(key.value);copied=true;}catch{}}
-      if(!copied){key.focus();key.select();key.setSelectionRange(0,key.value.length);try{copied=document.execCommand('copy');}catch{}}
-      if(copied){document.getElementById('copy-label').textContent='Đã sao chép';notice('copy-status','Đã sao chép public key. Bạn có thể dán vào trang quản lý thiết bị.','success');setTimeout(()=>document.getElementById('copy-label').textContent='Sao chép public key',2400);}
-      else{notice('copy-status','Đã chọn public key. Nhấn giữ vùng khóa và chọn “Sao chép”, hoặc bấm “Tải file”.','info');}
+      if(!copied){
+        const temporary=document.createElement('textarea');temporary.value=key.value;
+        temporary.readOnly=true;temporary.setAttribute('aria-hidden','true');
+        temporary.style.cssText='position:fixed;left:-9999px;top:0;opacity:0;font-size:16px';
+        document.body.appendChild(temporary);
+        try{temporary.select();temporary.setSelectionRange(0,temporary.value.length);copied=document.execCommand('copy');}catch{}
+        finally{temporary.remove();document.getElementById('copy-key').focus({preventScroll:true});}
+      }
+      if(copied){notice('copy-status','Đã sao chép','success');}
+      else{notice('copy-status','Không sao chép được. Hãy dùng nút Tải file.','error');}
     });
     document.getElementById('download-key').addEventListener('click',event=>{event.preventDefault();const file=URL.createObjectURL(new Blob([key.value],{type:'text/plain;charset=utf-8'}));const link=document.createElement('a');link.href=file;link.download='public-key.txt';document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(file),1000);});
     document.getElementById('show-password').addEventListener('click',function(){const input=document.getElementById('password');const show=input.type==='password';input.type=show?'text':'password';this.textContent=show?'Ẩn':'Hiện';this.setAttribute('aria-label',show?'Ẩn mật khẩu':'Hiện mật khẩu');this.setAttribute('aria-pressed',String(show));});
+    document.getElementById('worker').addEventListener('input',function(){document.getElementById('checkin').value=this.value.trim().replace(/\/+$/,'')+'/checkin';document.getElementById('heartbeat').checked=false;});
+    function validOrigin(value){try{const u=new URL(value);if(u.username||u.password||u.search||u.hash||!/^https?:$/.test(u.protocol))return false;
+      const raw=value.match(/^https?:\/\/([^/:?#]+)(?::([0-9]{1,5}))?$/);if(!raw)return false;
+      if(raw[2]&&(Number(raw[2])<1||Number(raw[2])>65535))return false;
+      if(!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/i.test(raw[1]))return false;
+      if(u.protocol==='https:')return true;
+      const parts=raw[1].split('.');if(parts.length!==4||parts.some(p=>!/^\d{1,3}$/.test(p)||Number(p)>255||(p.length>1&&p[0]==='0')))return false;
+      const n=parts.map(Number);return n[0]===10||(n[0]===192&&n[1]===168)||(n[0]===172&&n[1]>=16&&n[1]<=31);
+    }catch{return false;}}
     let saving=false;
     document.querySelectorAll('[data-connect-form]').forEach(form=>form.addEventListener('submit',async event=>{
-      event.preventDefault();if(saving||!form.reportValidity())return;saving=true;
+      event.preventDefault();if(saving){notice('save-status','Đang xử lý yêu cầu trước, vui lòng chờ…','info');return;}
+      const invalid=Array.from(form.elements).find(el=>el.willValidate&&!el.validity.valid);
+      if(invalid){const section=invalid.closest('details');if(section)section.open=true;
+        const label=document.querySelector('label[for="'+invalid.id+'"]');
+        notice('save-status','Chưa gửi: '+(label?label.textContent.trim():invalid.name)+' — '+invalid.validationMessage,'error');return;}
+      const worker=document.getElementById('worker'),checkin=document.getElementById('checkin');
+      const origin=worker.value.trim().replace(/\/+$/,'');
+      const qr=checkin.value.trim();
+      if(!validOrigin(origin)||!qr.endsWith('/checkin')||!validOrigin(qr.slice(0,-8))){notice('save-status','Link phải là HTTPS hoặc HTTP IP LAN, có thể kèm port 1–65535; URL QR kết thúc /checkin.','error');return;}
+      if((origin.startsWith('http://')||qr.startsWith('http://'))&&!document.getElementById('allow-http').checked){notice('save-status','Chưa gửi: hãy tích ô chấp nhận HTTP cho mạng LAN test, hoặc dùng HTTPS.','error');return;}
+      saving=true;
+      const data=new URLSearchParams(new FormData(form));data.set('worker',origin);data.set('checkin',checkin.value.trim());data.set('heartbeat',document.getElementById('heartbeat').checked?'1':'0');
       const buttons=document.querySelectorAll('[data-connect-form] button[type=submit]');buttons.forEach(button=>button.disabled=true);
       notice('save-status','Đang thử kết nối Wi-Fi… Quá trình này có thể mất khoảng 15 giây.','info');
-      const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),25000);
-      try{const response=await fetch('/save',{method:'POST',body:new URLSearchParams(new FormData(form)),signal:controller.signal});const message=await response.text();
-        if(!response.ok){notice('save-status',response.status===400?'Không kết nối được. Hãy kiểm tra tên mạng, mật khẩu và chu kỳ QR rồi thử lại.':'Chưa lưu được cấu hình. Hãy thử lại.', 'error');saving=false;buttons.forEach(button=>button.disabled=false);}
-        else{notice('save-status','Đã lưu cấu hình. Thiết bị đang khởi động lại. Hãy kết nối điện thoại về Wi-Fi của bạn và chờ QR xuất hiện trên màn hình.','success');}
-      }catch{notice('save-status','Chưa nhận được phản hồi. Hãy kiểm tra màn hình thiết bị và kết nối Wi-Fi; nếu thiết bị chưa kết nối, thử lại.','error');saving=false;buttons.forEach(button=>button.disabled=false);}
+      let timer;const started=Date.now();
+      try{const controller=new AbortController();timer=setTimeout(()=>controller.abort(),25000);
+        const response=await fetch('/save',{method:'POST',body:data,signal:controller.signal});const message=(await response.text()).slice(0,1500);
+        if(!response.ok){notice('save-status','HTTP '+response.status+' • '+Math.round((Date.now()-started)/1000)+'s — '+(message||'Board không trả nội dung lỗi.'),'error');saving=false;buttons.forEach(button=>button.disabled=false);}
+        else{notice('save-status','HTTP '+response.status+' — '+message+' Kết nối điện thoại về Wi-Fi của bạn và chờ QR. Lưu Wi-Fi chưa chứng minh Worker đã kết nối.','success');}
+      }catch(error){notice('save-status',(error.name==='AbortError'?'Timeout sau 25 giây':'Lỗi trình duyệt/kết nối: '+error.message)+'. Giữ kết nối Wi-Fi VNFARM, mở http://192.168.4.1/ trong Chrome/Safari. Board có thể đã lưu; kiểm tra màn hình trước khi thử lại.','error');saving=false;buttons.forEach(button=>button.disabled=false);}
       finally{clearTimeout(timer);}
     }));
   </script>

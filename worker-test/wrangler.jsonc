@@ -1,0 +1,43 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vnfarm-enrollment-lab",
+  "account_id": "bb85d6a2a3036df9fc50f874b799a8d8",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-04",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": true,
+  "vars": {
+    "REGISTRATION_SITE_ID": "lab_site",
+    "REGISTRATION_SCOPE_ID": "lab_scope",
+    "REGISTRATION_SCOPE_NAME": "Firmware connection lab"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vnfarm-enrollment-lab",
+      "database_id": "f55987a3-8efd-4f77-b1a5-cd05c0fab403"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "DEVICES",
+        "class_name": "DeviceDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "DeviceDO"
+      ]
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "redact_query_string": true
+  }
+}

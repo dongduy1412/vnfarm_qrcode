@@ -71,6 +71,8 @@ async function refresh() {
     $('#connection').textContent = 'Server đang chạy'; $('#connection').className = 'connection online';
     $('#base-url').textContent = status.base_url;
     $('#http-status').textContent = 'Đã kết nối';
+    $('#server-dot').classList.add('active');
+    $('#usb-dot').classList.toggle('active', status.usb.supported && status.usb.ports.length > 0);
     $('#usb-status').textContent = !status.usb.supported ? 'Không đọc được danh sách USB' :
       status.usb.ports.length ? status.usb.ports.map((port) => `${port.port} · USB JTAG/Serial`).join(', ') : 'Chưa nhận diện board USB';
     renderSession(status.session);
@@ -83,6 +85,8 @@ async function refresh() {
     $('#connection').textContent = 'Mất kết nối server'; $('#connection').className = 'connection offline';
     $('#http-status').textContent = 'Mất kết nối';
     $('#usb-status').textContent = 'Không cập nhật được';
+    $('#server-dot').classList.remove('active');
+    $('#usb-dot').classList.remove('active');
     renderSession(null);
     throw error;
   }
@@ -160,6 +164,15 @@ document.querySelectorAll('[data-wifi-command]').forEach(button=>button.addEvent
   finally{buttons.forEach(item=>item.disabled=false);}
 }));
 $('#refresh-wifi-command').addEventListener('click',wifiCommandStatus);
+const navigation = [...document.querySelectorAll('.nav-link')];
+navigation.forEach(link => link.addEventListener('click', () => {
+  navigation.forEach(item => item.classList.toggle('active', item === link));
+}));
+const sectionObserver = new IntersectionObserver(entries => {
+  const visible = entries.filter(entry => entry.isIntersecting).sort((a,b) => b.intersectionRatio-a.intersectionRatio)[0];
+  if (visible) navigation.forEach(link => link.classList.toggle('active', link.hash === '#'+visible.target.id));
+}, {rootMargin:'-5% 0px -55% 0px',threshold:0});
+['overview','verify-card','keys','wifi-control'].forEach(id => sectionObserver.observe(document.getElementById(id)));
 async function init() {
   const fromQr = location.pathname === '/checkin' && location.search.length > 1;
   const qrUrl = location.href;

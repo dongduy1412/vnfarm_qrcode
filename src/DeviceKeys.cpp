@@ -120,3 +120,13 @@ bool DeviceKeys::signQr(const String& data, String& signature) {
   return signature.length() == 86;
 }
 
+String DeviceKeys::serverKeyId() {
+  if (!ready_) return "";
+  unsigned char raw[65], digest[32]; size_t length=0;
+  auto* ec=mbedtls_pk_ec(key_);
+  if (mbedtls_ecp_point_write_binary(&ec->grp,&ec->Q,MBEDTLS_ECP_PF_UNCOMPRESSED,
+      &length,raw,sizeof(raw))!=0 || length!=65 ||
+      mbedtls_sha256_ret(raw,length,digest,0)!=0) return "";
+  return base64Url(digest,sizeof(digest));
+}
+

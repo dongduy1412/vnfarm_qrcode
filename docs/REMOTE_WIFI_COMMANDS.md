@@ -30,7 +30,11 @@ Preserve these ignored operator credentials securely outside Git.
 
 ## Contract and recovery
 
-- Firmware polls every 60 seconds over verified HTTPS to its build-time host.
+- Firmware polls every 60 seconds by default over verified HTTPS to its build-time host.
+  `include/ServerConfig.h` centralizes the check-in URL, management origin and
+  poll interval. `QR_CLOUD_HEARTBEAT_ENABLED=0` disables only the personal-test
+  ping/pong extension; contract poll/ACK remain enabled. See
+  [project handoff](PROJECT_WORKER_HANDOFF.md).
 - POST `/api/device/poll`: `{v:1,did,t,sig}`, signed message
   `v1.poll.<did>.<t>`.
 - Empty response: `{command:null}`; command response: `{command,cmdId,t}`.

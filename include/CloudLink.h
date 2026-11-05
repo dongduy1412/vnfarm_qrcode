@@ -8,7 +8,7 @@ struct Event {
   char cmdId[65]={};
   char command[24]={};
 };
-bool begin();
+bool begin(const String& origin, bool heartbeatEnabled);
 void tick(DeviceKeys& keys, const String& deviceId,const char* pendingAck="");
 bool acknowledge(DeviceKeys& keys,const String& deviceId,const char* cmdId);
 bool nextEvent(Event& event);
