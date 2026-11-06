@@ -103,6 +103,13 @@ with sync_playwright() as p:
     assert requests[-1]['worker']==['https://project.example.com']
     assert requests[-1]['checkin']==['https://project.example.com/checkin']
     assert requests[-1]['heartbeat']==['0']
+    page.locator('#same-backend').check()
+    page.locator('#identity-from').fill('https://old-project.example.com')
+    page.locator('#new-network button[type=submit]').click()
+    page.locator('#save-status.error').wait_for()
+    assert requests[-1]['same_backend']==['1']
+    assert requests[-1]['identity_from']==['https://old-project.example.com']
+    page.locator('#same-backend').uncheck()
     previous=len(requests)
     for invalid in ('http://project.example.com','https://user@project.example.com','https://project.example.com/api','https://project.example.com?x=1'):
         page.locator('#worker').fill(invalid)

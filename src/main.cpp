@@ -14,7 +14,6 @@
 #include "Enrollment.h"
 #include "DeviceKeys.h"
 #include "Screen.h"
-#include "CloudLink.h"
 #include "SavedNetworks.h"
 #include "QrContract.h"
 #include "SetupPageAsset.h"
@@ -25,7 +24,7 @@ DeviceKeys keys;
 SavedNetworks networks;
 WifiCommands wifiCommands;
 Enrollment enrollment;
-bool projectMode=false,identityInitialized=false,websocketStarted=false;
+bool identityInitialized=false,websocketStarted=false;
 String enrollmentScreen;
 WebServer portal(80);
 DNSServer portalDns;
@@ -55,41 +54,6 @@ time_t displayedSlot = 0;
 String displayedKid;
 String displayedUrl;
 String usbCommand;
-bool remoteRestartPending=false,remoteAckReceived=false;
-uint32_t remoteRestartAt=0;
-String remoteCommandId;
-
-void handleRemoteCommands() {
-  CloudLink::Event event;
-  while(CloudLink::nextEvent(event)) {
-    if(event.type==CloudLink::Event::Acknowledged) {
-      if(remoteRestartPending&&remoteCommandId==event.cmdId)remoteAckReceived=true;
-      else if(wifiCommands.acknowledge(event.cmdId))Serial.printf("Device command ACK confirmed: %s\n",event.cmdId);
-      continue;
-    }
-    if(remoteRestartPending)continue;
-    auto result=wifiCommands.accept(event.cmdId,event.command,WiFi.SSID(),networks);
-    if(result==WifiCommands::Failed) {Serial.println("Device command storage failed; not acknowledged");continue;}
-    if(result==WifiCommands::Duplicate) {CloudLink::acknowledge(keys,deviceId,event.cmdId);continue;}
-    remoteCommandId=event.cmdId;remoteRestartPending=true;remoteAckReceived=false;remoteRestartAt=millis()+12000;
-    displayedUrl="";
-    Screen::status("DAT LAI WI-FI","Dang gui xac nhan cho server...");
-    Serial.printf("Device command applied: %s | saved profiles=%u | signing key preserved\n",event.command,static_cast<unsigned>(networks.size()));
-    CloudLink::acknowledge(keys,deviceId,event.cmdId);
-  }
-  if(remoteRestartPending&&(remoteAckReceived||static_cast<int32_t>(millis()-remoteRestartAt)>=0)) {
-    // Managed profiles are already updated. Clear the driver's native STA
-    // credentials only after attempting ACK over the still-live RAM connection.
-    esp_wifi_set_storage(WIFI_STORAGE_FLASH);
-    WiFi.disconnect(false,true);
-    esp_wifi_set_storage(WIFI_STORAGE_RAM);
-    if(remoteAckReceived) {
-      wifiCommands.acknowledge(remoteCommandId.c_str());
-      Serial.println("Remote Wi-Fi command acknowledged; restarting");
-    } else Serial.println("ACK still pending; will retry after Wi-Fi is available");
-    Serial.flush();delay(100);ESP.restart();
-  }
-}
 
 // Local USB maintenance only. Keep the signing key and saved settings;
 // mark setup incomplete so the portal also survives a power cycle.
@@ -149,6 +113,20 @@ void handleUsbSetup() {
         else Serial.println("Server URL save failed; setup required.");
       }else Serial.println("Invalid server origin; not saved.");
     }
+    if (usbCommand.startsWith("IDENTITY_COPY ")) {
+      // Explicit USB maintenance: operator confirms both addresses are one backend.
+      int separator=usbCommand.indexOf(' ',14);
+      if(separator>14){
+        String from=usbCommand.substring(14,separator),to=usbCommand.substring(separator+1);
+        bool ok=Enrollment::copyIdentity(from,to,keys);
+        Serial.printf("Identity copy: %s (key/source preserved)\n",ok ? "OK" : "FAILED");
+      }else Serial.println("Usage: IDENTITY_COPY <old-origin> <new-origin>");
+    }
+    if (usbCommand.startsWith("IDENTITY_CHECK ")) {
+      String origin=usbCommand.substring(15);origin.trim();
+      Enrollment probe;bool valid=probe.begin(origin,keys,deviceId);
+      Serial.printf("Identity check: origin=%s valid=%d ready=%d did=%s\n",origin.c_str(),int(valid),int(probe.ready()),probe.deviceId().c_str());
+    }
     if (usbCommand == "DEVICE_INFO") {
       Serial.printf("Device info: firmware=0.4.1 did=%s server=%s setup=%d wifi=%d ntp=%lu identity=%d ws=%d status=%s\n",
           deviceId.c_str(),workerOrigin.c_str(),provisioning,static_cast<int>(WiFi.status()),
@@ -156,12 +134,12 @@ void handleUsbSetup() {
       WebSocketLink::diagnostics();
     }
     if (usbCommand == "QR_INFO") {
-      if (initialized && !provisioning && !remoteRestartPending && timeReady && ntpGate.ready(time(nullptr)) && WiFi.status() == WL_CONNECTED && displayedUrl.length()) {
+      if (initialized && !provisioning && timeReady && ntpGate.ready(time(nullptr)) && WiFi.status() == WL_CONNECTED && displayedUrl.length()) {
         // Explicit USB diagnostic for interoperability tests; routine logs omit sig.
         Serial.printf("QR public key: %s\nQR test URL: %s\n", keys.publicRaw().c_str(), displayedUrl.c_str());
       } else {
         const char* reason = !initialized ? "initialization" : provisioning ? "setup" :
-            remoteRestartPending ? "remote_restart" : WiFi.status() != WL_CONNECTED ? "wifi" :
+            WiFi.status() != WL_CONNECTED ? "wifi" :
             !ntpGate.ready(time(nullptr)) ? "ntp" : !timeReady ? "loop_pending" : "qr_render";
         Serial.printf("QR not ready; reason=%s init=%d portal=%d time=%d wifi=%d url=%u ntp=%lu uptime_ms=%lu reset=%d\n",
             reason, initialized, provisioning, timeReady, static_cast<int>(WiFi.status()),
@@ -252,6 +230,15 @@ void saveSetup() {
   if (!networks.remember(ssid, password)) {
     portal.send(500, "text/plain", "Khong luu duoc danh sach Wi-Fi. Hay thu lai.");
     return;
+  }
+  if(portal.arg("same_backend")=="1") {
+    String previous=portal.arg("identity_from");previous.trim();
+    while(previous.endsWith("/"))previous.remove(previous.length()-1);
+    if(!Enrollment::copyIdentity(previous,origin,keys)) {
+      portal.send(409,"text/plain; charset=utf-8","IDENTITY_MIGRATION_FAILED: URL cu khong co identity hop le hoac URL moi da co identity khac. Khong xoa key/dang ky; kiem tra URL server cu.");
+      return;
+    }
+    Serial.println("SETUP identity copied for operator-confirmed same backend; source retained");
   }
   Preferences store;
   if (!store.begin("qr-config", false)) {
@@ -398,7 +385,13 @@ void setup() {
   configured=loadConfig();networksReady=networks.load(wifiSsid,wifiPassword);
   Serial.printf("Saved Wi-Fi profiles: %u\n", static_cast<unsigned>(networks.size()));
   if (!networksReady) Serial.println("Could not read/migrate Wi-Fi profiles; setup required.");
-  if (!configured || !networksReady || !networks.size()) {
+  // The EN/RST button on ESP32-S3 normally reports POWERON, just like
+  // reconnecting power. Keep this decision RAM-only so saving the setup form
+  // followed by ESP.restart() (SW reset) resumes normal operation.
+  const esp_reset_reason_t resetReason = esp_reset_reason();
+  const bool manualSetup = resetReason == ESP_RST_POWERON || resetReason == ESP_RST_EXT;
+  if (manualSetup) Serial.println("RST/power-on: opening Wi-Fi setup; saved networks, server, key and identity preserved");
+  if (manualSetup || !configured || !networksReady || !networks.size()) {
     initialized = startPortal();
   } else {
     initialized = keys.begin();
@@ -412,7 +405,6 @@ void setup() {
       wifiSearchStarted=millis();
       // All configured servers use authenticated enrollment and WebSocket.
       // Never fall back to the old polling demo based on a hostname.
-      projectMode = true;
       identityInitialized=enrollment.begin(workerOrigin,keys,deviceId);
       if(!identityInitialized){Serial.println("Identity storage invalid; enrollment blocked");Screen::status("LOI IDENTITY","Kiem tra cau hinh server / bo nho.");}
     }
@@ -423,7 +415,6 @@ void setup() {
 void loop() {
   handleUsbSetup();
   if (!initialized) { delay(100); return; }
-  if(remoteRestartPending){delay(20);return;}
   if (provisioning) {
     portalDns.processNextRequest();
     portal.handleClient();
@@ -492,7 +483,7 @@ void loop() {
     Serial.println(keys.keyId());
     if (checkinUrl.isEmpty()) Screen::status("CHUA CO URL", "Chua phat QR check-in.\nCan cau hinh URL cua server.");
   }
-  if(projectMode){
+  {
     if(!identityInitialized){delay(50);return;}
     enrollment.tick(keys);
     if(!enrollment.ready()){

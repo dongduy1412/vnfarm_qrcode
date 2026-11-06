@@ -26,6 +26,11 @@ int main(){
   assert(bodies[0].find("publicKey")!=std::string::npos&&bodies[1].find("proof")!=std::string::npos);
   Enrollment reboot;assert(reboot.begin("https://project.test",keys,"board"));assert(reboot.ready());reboot.tick(keys);assert(urls.size()==2);
   Enrollment other;assert(other.begin("https://other.test",keys,"board"));assert(!other.ready());
+  assert(Enrollment::copyIdentity("https://project.test","http://192.168.1.62:8787",keys));
+  Enrollment moved;assert(moved.begin("http://192.168.1.62:8787",keys,"board")&&moved.ready());
+  assert(moved.token()==first.token()&&moved.deviceId()==first.deviceId());
+  assert(!Enrollment::copyIdentity("https://missing.test","https://new.test",keys));
+  Enrollment original;assert(original.begin("https://project.test",keys,"board")&&original.ready());
   testKid="CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";Enrollment wrongKey;assert(!wrongKey.begin("https://project.test",keys,"board"));testKid="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
   reset();Enrollment pending;assert(pending.begin("https://project.test",keys,"board"));responses={{201,challenge()}};pending.tick(keys);
   Enrollment resumed;assert(resumed.begin("https://project.test",keys,"board"));responses={{201,completed()}};resumed.tick(keys);assert(resumed.ready());

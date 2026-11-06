@@ -71,6 +71,23 @@ bool Enrollment::begin(const String& origin,DeviceKeys& keys,const String& seria
   // 'completing' survives crashes: the response may have been consumed once.
   status_="CAN KHOI PHUC GHEP NOI";phase_="blocked";return true;
 }
+bool Enrollment::copyIdentity(const String& from,const String& to,DeviceKeys& keys) {
+  if(!ServerOrigin::valid(to.c_str()))return false;
+  Enrollment source;
+  bool sourceValid=source.begin(from,keys,"");
+  Serial.printf("Identity migration source: origin=%s valid=%d ready=%d phase=%s\n",from.c_str(),int(sourceValid),int(source.ready()),source.phase_.c_str());
+  if(!sourceValid||!source.ready())return false;
+  Enrollment destination;
+  bool destinationValid=destination.begin(to,keys,"");
+  Serial.printf("Identity migration destination: origin=%s valid=%d ready=%d phase=%s\n",to.c_str(),int(destinationValid),int(destination.ready()),destination.phase_.c_str());
+  if(!destinationValid)return false;
+  // Never overwrite a different ready identity at the destination.
+  if(destination.ready())return destination.deviceId()==source.deviceId()&&destination.token()==source.token();
+  source.origin_=to;source.slot_=destination.slot_;
+  if(!source.save()){Serial.println("Identity migration: NVS write/readback failed");return false;}
+  Enrollment verify;
+  return verify.begin(to,keys,"")&&verify.ready()&&verify.deviceId()==source.deviceId()&&verify.token()==source.token();
+}
 void Enrollment::tick(DeviceKeys& keys) {
   if(ready()||phase_=="blocked"||WiFi.status()!=WL_CONNECTED||static_cast<int32_t>(millis()-retryAt_)<0)return;
   retryAt_=millis()+30000;

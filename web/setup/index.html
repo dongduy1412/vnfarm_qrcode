@@ -56,6 +56,8 @@
         <p class="description">Chọn mạng đã lưu hoặc nhập một mạng Wi-Fi 2.4 GHz mới.</p>
         <div class="field"><label for="worker">Link Worker dự án</label><input id="worker" name="worker" form="new-network" type="url" maxlength="160" value="{{WORKER_ORIGIN}}" placeholder="https://worker-cua-ban.workers.dev" required spellcheck="false" autocapitalize="none"></div>
 
+        <label><input id="same-backend" type="checkbox" style="width:20px;height:20px;vertical-align:middle"> Cùng backend, giữ đăng ký hiện tại (chỉ đổi IP)</label>
+        <div id="identity-source" class="field" hidden><label for="identity-from">URL cũ đã đăng ký thành công</label><input id="identity-from" type="url" value="{{WORKER_ORIGIN}}" maxlength="160"><p class="hint">Chỉ chọn khi cùng máy server và database. Token sẽ được dùng ở URL mới; không dùng khi chuyển sang backend khác.</p></div>
         <details class="settings"><summary>Server nâng cao</summary><div class="field"><label for="checkin">URL check-in</label><input id="checkin" name="checkin" form="new-network" type="url" maxlength="160" value="{{CHECKIN_URL}}" required><p class="hint">Mặc định Worker + /checkin. Có thể dùng host khác nếu dự án yêu cầu.</p></div><label><input id="heartbeat" name="heartbeat" form="new-network" type="checkbox" value="1" {{HEARTBEAT_CHECKED}} style="width:20px;height:20px;vertical-align:middle"> Ping/pong cho Worker test cũ</label><p class="hint">Server dự án dùng WebSocket tự động; tùy chọn này chỉ dành cho Worker test cũ. HTTPS luôn kiểm tra chứng chỉ. HTTP chỉ dành cho IP LAN trong mạng test tin cậy, không có bảo vệ TLS. Nếu không kết nối được, mở lại setup qua USB để sửa link.</p></details>
         <label><input id="allow-http" type="checkbox" style="width:20px;height:20px;vertical-align:middle"> Tôi chấp nhận HTTP không mã hóa, chỉ dùng mạng LAN test tin cậy.</label>
         <noscript><p class="notice error">JavaScript chưa hoạt động. Mở http://192.168.4.1/ bằng Chrome/Safari thay vì cửa sổ đăng nhập Wi-Fi.</p></noscript>
@@ -106,6 +108,7 @@
       const parts=raw[1].split('.');if(parts.length!==4||parts.some(p=>!/^\d{1,3}$/.test(p)||Number(p)>255||(p.length>1&&p[0]==='0')))return false;
       const n=parts.map(Number);return n[0]===10||(n[0]===192&&n[1]===168)||(n[0]===172&&n[1]>=16&&n[1]<=31);
     }catch{return false;}}
+    document.getElementById('same-backend').addEventListener('change',function(){document.getElementById('identity-source').hidden=!this.checked;});
     let saving=false;
     document.querySelectorAll('[data-connect-form]').forEach(form=>form.addEventListener('submit',async event=>{
       event.preventDefault();if(saving){notice('save-status','Đang xử lý yêu cầu trước, vui lòng chờ…','info');return;}
@@ -118,8 +121,12 @@
       const qr=checkin.value.trim();
       if(!validOrigin(origin)||!qr.endsWith('/checkin')||!validOrigin(qr.slice(0,-8))){notice('save-status','Link phải là HTTPS hoặc HTTP IP LAN, có thể kèm port 1–65535; URL QR kết thúc /checkin.','error');return;}
       if((origin.startsWith('http://')||qr.startsWith('http://'))&&!document.getElementById('allow-http').checked){notice('save-status','Chưa gửi: hãy tích ô chấp nhận HTTP cho mạng LAN test, hoặc dùng HTTPS.','error');return;}
+      const sameBackend=document.getElementById('same-backend').checked;
+      const identityFrom=document.getElementById('identity-from').value.trim().replace(/\/+$/,'');
+      if(sameBackend&&!validOrigin(identityFrom)){notice('save-status','URL cũ để giữ đăng ký không hợp lệ.','error');return;}
       saving=true;
-      const data=new URLSearchParams(new FormData(form));data.set('worker',origin);data.set('checkin',checkin.value.trim());data.set('heartbeat',document.getElementById('heartbeat').checked?'1':'0');
+      const data=new URLSearchParams(new FormData(form));
+      if(sameBackend){data.set('same_backend','1');data.set('identity_from',identityFrom);}data.set('worker',origin);data.set('checkin',checkin.value.trim());data.set('heartbeat',document.getElementById('heartbeat').checked?'1':'0');
       const buttons=document.querySelectorAll('[data-connect-form] button[type=submit]');buttons.forEach(button=>button.disabled=true);
       notice('save-status','Đang thử kết nối Wi-Fi… Quá trình này có thể mất khoảng 15 giây.','info');
       let timer;const started=Date.now();

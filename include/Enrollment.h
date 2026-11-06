@@ -5,6 +5,8 @@ class Enrollment {
 public:
   bool begin(const String& origin, DeviceKeys& keys, const String& serial);
   void tick(DeviceKeys& keys);
+  // Explicit operator confirmation: both origins refer to the same backend.
+  static bool copyIdentity(const String& from, const String& to, DeviceKeys& keys);
   bool ready() const { return phase_=="ready"; }
   const String& deviceId() const { return did_; }
   const String& token() const { return token_; }
