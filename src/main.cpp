@@ -152,7 +152,8 @@ void handleUsbSetup() {
     if (usbCommand == "DEVICE_INFO") {
       Serial.printf("Device info: firmware=0.4.1 did=%s server=%s setup=%d wifi=%d ntp=%lu identity=%d ws=%d status=%s\n",
           deviceId.c_str(),workerOrigin.c_str(),provisioning,static_cast<int>(WiFi.status()),
-          static_cast<unsigned long>(ntpGate.lastSync()),enrollment.ready(),WebSocketLink::isConnected(),enrollment.status().c_str());
+          static_cast<unsigned long>(ntpGate.lastSync()),int(enrollment.ready()),int(WebSocketLink::isConnected()),enrollment.ready() ? (WebSocketLink::isConnected() ? "ONLINE" : "WAITING_WS_BOOT_ACK") : enrollment.status().c_str());
+      WebSocketLink::diagnostics();
     }
     if (usbCommand == "QR_INFO") {
       if (initialized && !provisioning && !remoteRestartPending && timeReady && ntpGate.ready(time(nullptr)) && WiFi.status() == WL_CONNECTED && displayedUrl.length()) {
@@ -409,11 +410,11 @@ void setup() {
       Serial.println("NTP: waiting for successful sync in this boot; periodic interval=3600s");
       connectWifi();
       wifiSearchStarted=millis();
-      projectMode = workerOrigin != "https://vnfarm-qrcode-device-link.dong141220047.workers.dev";
-      if(projectMode){
-        identityInitialized=enrollment.begin(workerOrigin,keys,deviceId);
-        if(!identityInitialized){Serial.println("Identity storage invalid; enrollment blocked");Screen::status("LOI IDENTITY","Kiem tra cau hinh server / bo nho.");}
-      }else if(!CloudLink::begin(workerOrigin,workerHeartbeat))Serial.println("Lab cloud link initialization failed");
+      // All configured servers use authenticated enrollment and WebSocket.
+      // Never fall back to the old polling demo based on a hostname.
+      projectMode = true;
+      identityInitialized=enrollment.begin(workerOrigin,keys,deviceId);
+      if(!identityInitialized){Serial.println("Identity storage invalid; enrollment blocked");Screen::status("LOI IDENTITY","Kiem tra cau hinh server / bo nho.");}
     }
   }
   if (!initialized) Screen::status("LOI KHOI TAO", "Khong phat QR. Kiem tra log USB.");
@@ -422,7 +423,6 @@ void setup() {
 void loop() {
   handleUsbSetup();
   if (!initialized) { delay(100); return; }
-  handleRemoteCommands();
   if(remoteRestartPending){delay(20);return;}
   if (provisioning) {
     portalDns.processNextRequest();
@@ -530,7 +530,6 @@ void loop() {
         static_cast<unsigned long>(QrContract::timestamp(static_cast<uint32_t>(now), qrSeconds)), static_cast<unsigned long>(qrSeconds));
     Serial.printf("QR target: %s\n", checkinUrl.c_str());
   }
-  if(!projectMode)CloudLink::tick(keys, deviceId,wifiCommands.pendingAck());
   delay(20);
 }
 

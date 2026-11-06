@@ -77,7 +77,7 @@ bool begin(const String& origin,const String& deviceId,const String& token,const
   const auto* partition=esp_partition_find_first(ESP_PARTITION_TYPE_APP,ESP_PARTITION_SUBTYPE_APP_FACTORY,nullptr);
   if(!partition){vQueueDelete(incoming);incoming=nullptr;return false;}
   p["otaSlotBytes"]=partition->size; // Application size only; OTA capability not advertised.
-  p.createNestedArray("capabilities");p["appliedRevision"]=0;p["healthy"]=true;
+  p.createNestedArray("capabilities");p["healthy"]=true;
   serializeJson(doc,bootMessage_);
   // Persist an immutable BOOT event. Reconnect retries retain eventId/payload.
   Preferences store;if(!store.begin("qr-ws",false))return false;
@@ -98,23 +98,29 @@ void tick(){
   if(client&&!welcomed&&static_cast<uint32_t>(millis()-connectAt)>20000){lost=true;return;}
   Message message;
   while(xQueueReceive(incoming,&message,0)==pdTRUE){
-    if(strcmp(message.text,"pong")==0){free(message.text);continue;}
+    if(strcmp(message.text,"pong")==0){Serial.println("WS heartbeat pong received");free(message.text);continue;}
     DynamicJsonDocument doc(20000);auto error=deserializeJson(doc,message.text);free(message.text);
-    if(error||doc["version"]!=1)continue;
+    if(error){Serial.printf("WS JSON error: %s\n",error.c_str());continue;}
+    if(doc["version"]!=1){Serial.println("WS ignored unsupported version");continue;}
     if(doc["type"]=="WELCOME"&&doc["payload"]["generation"]==1&&doc["payload"]["sessionId"].is<const char*>()){
       welcomed=true;bootSent=false;pingAt=millis();Serial.println("WS WELCOME received");
     }else if(welcomed&&doc["type"]=="EVENT_ACK"&&doc["payload"]["eventId"]==bootEvent_){
       bootConfirmed=true;failures=0;Serial.println("WS BOOT acknowledged; device online");
       Preferences store;if(store.begin("qr-ws",false)){store.remove("boot");store.end();}
+    }else if(doc["type"]=="EVENT_ACK"){
+      Serial.printf("WS ACK mismatch: welcome=%d expected=%s received=%s\n",int(welcomed),bootEvent_.c_str(),doc["payload"]["eventId"] | "MISSING");
     }else if(doc["type"]=="ERROR"){
-      Serial.println("WS server rejected event; inspect protocol/configuration");revoked=true;
+      Serial.printf("WS server rejected event: code=%s\n",doc["payload"]["code"] | "UNKNOWN");revoked=true;
     }
     // No command capabilities advertised in this enrollment milestone.
   }
   if(welcomed&&!bootConfirmed&&(!bootSent||static_cast<uint32_t>(millis()-sentAt)>=10000)){
     bootSent=transmit(bootMessage_);sentAt=millis();
+    Serial.printf("WS BOOT transmit: sent=%d event=%s\n",bootSent,bootEvent_.c_str());
   }
   if(welcomed&&static_cast<uint32_t>(millis()-pingAt)>=30000){transmit("ping");pingAt=millis();}
 }
 bool isConnected(){return bootConfirmed.load();}
+void diagnostics(){Serial.printf("WS diagnostic: socket=%d welcome=%d boot_sent=%d boot_ack=%d lost=%d revoked=%d event=%s\n",
+    int(socketUp.load()),int(welcomed),int(bootSent),int(bootConfirmed.load()),int(lost.load()),int(revoked.load()),bootEvent_.c_str());}
 }

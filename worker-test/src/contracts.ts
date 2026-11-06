@@ -243,7 +243,8 @@ export const Boot = z.strictObject({
         .positive()
         .max(8 * 1024 * 1024),
     capabilities: z.array(Action).max(Action.options.length),
-    appliedRevision: z.number().int().nonnegative(),
+    // Compatibility with newer firmware/upstream BOOT without revision fields.
+    appliedRevision: z.number().int().nonnegative().default(0),
     healthy: z.boolean(),
     runtimeConfigVersion: z.literal(1).optional(),
     wifiSsid: z.string().max(32).optional(),
